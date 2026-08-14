@@ -40,17 +40,23 @@ pub enum Extension {
     Sstc = 0,
     Hypervisor = 1,
     Smaia = 2,
+    Smsdid = 3,
+    Smmpt = 4,
+    Smsdia = 5,
     // Remember to increment `Extension::COUNT` while implementing new extensions.
 }
 
 impl Extension {
-    pub const COUNT: usize = 3;
+    pub const COUNT: usize = 6;
 
     pub const fn as_str(&self) -> &'static str {
         match self {
             Self::Sstc => "sstc",
             Self::Hypervisor => "h",
             Self::Smaia => "smaia", // TODO verify with DTB standard
+            Self::Smsdid => "smsdid",
+            Self::Smmpt => "smmpt",
+            Self::Smsdia => "smsdia",
         }
     }
 
@@ -60,7 +66,15 @@ impl Extension {
     }
 
     pub fn iter() -> impl Iterator<Item = Self> {
-        [Self::Sstc, Self::Hypervisor, Self::Smaia].into_iter()
+        [
+            Self::Sstc,
+            Self::Hypervisor,
+            Self::Smaia,
+            Self::Smsdid,
+            Self::Smmpt,
+            Self::Smsdia,
+        ]
+        .into_iter()
     }
 }
 
@@ -83,7 +97,6 @@ pub fn hart_mhpm_mask(hart_id: usize) -> u32 {
 }
 
 /// Detects RISC-V extensions from the device tree for all harts.
-#[cfg(not(feature = "nemu"))]
 pub fn extension_detection(cpus: &NodeSeq) {
     use crate::devicetree::Cpu;
 
@@ -182,18 +195,6 @@ fn mhpm_detection() {
 pub fn hart_features_detection() {
     privileged_version_detection();
     mhpm_detection();
-}
-
-#[cfg(feature = "nemu")]
-pub fn init(cpus: &NodeSeq) {
-    for hart_id in 0..cpus.len() {
-        let mut hart_exts = [false; Extension::COUNT];
-        hart_exts[Extension::Sstc.index()] = true;
-        hart_context(hart_id).features = HartFeatures {
-            extension: hart_exts,
-            privileged_version: PrivilegedVersion::Version1_12,
-        }
-    }
 }
 
 // Check if current cpu support target privillege.

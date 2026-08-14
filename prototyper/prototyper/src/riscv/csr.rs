@@ -6,6 +6,13 @@ use seq_macro::seq;
 // Supervisor Timer Register (Sstc extension)
 pub const CSR_STIMECMP: u16 = 0x14D;
 
+// Machine-level Memory Protection Tables and Supervisor Domain Configuration
+// (smmtt extensions: Smsdid, Smmpt, Smsdia)
+pub const CSR_MMPT: u16 = 0x382;
+pub const CSR_MSDCFG: u16 = 0x74E;
+pub const CSR_MSIDEIP: u16 = 0xF4F;
+pub const CSR_MSIDEIE: u16 = 0x74F;
+
 // Machine Counter-Enable and Environment Configuration
 pub const CSR_MCOUNTEREN: u16 = 0x306;
 pub const CSR_MENVCFG: u16 = 0x30a;

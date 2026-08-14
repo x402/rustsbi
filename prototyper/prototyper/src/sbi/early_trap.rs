@@ -21,6 +21,7 @@ pub(crate) unsafe extern "C" fn light_expected_trap() {
     )
 }
 
+#[derive(Clone, Copy)]
 #[repr(C)]
 pub struct TrapInfo {
     pub mepc: usize,

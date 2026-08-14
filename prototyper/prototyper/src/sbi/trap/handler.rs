@@ -16,6 +16,47 @@ use crate::sbi::rfence;
 
 use super::helper::*;
 
+/// Handle an MSDEI (Machine Supervisor Domain External Interrupt).
+///
+/// MSDEI traps to M-mode and must NOT be delegated to S-mode.  In Phase 1,
+/// only the host SID (SIDN 0) exists.  We decode the pending SIDs from
+/// `msideip & msideie`, log them without heap allocation, and clear only
+/// the pending SID bits in `msideie` to acknowledge.
+#[inline]
+pub fn msdei_handler() {
+    let raw_mcause = riscv::register::mcause::read().bits();
+    match rdsm::interrupt::MsdeiTrap::from_trap(raw_mcause) {
+        Some(msdei) => {
+            let pending_mask = msdei.pending_mask();
+            if pending_mask == 0 {
+                warn!(
+                    "RDSM: MSDEI interrupt on hart {} but no pending SIDs",
+                    current_hartid()
+                );
+            } else {
+                warn!(
+                    "RDSM: MSDEI interrupt on hart {}, pending SID mask: {:#x}",
+                    current_hartid(),
+                    pending_mask
+                );
+                for sid in msdei.pending_sids() {
+                    warn!("RDSM:   pending SID {}", sid);
+                }
+            }
+            // Phase 1: acknowledge by clearing only the pending SID bits
+            // in msideie (not writing 0, which would disable all MSDEI).
+            // Future phases will route interrupts to the appropriate
+            // supervisor domain.
+            let old_msideie = rdsm::csr::read_msideie();
+            rdsm::csr::write_msideie(old_msideie & !pending_mask);
+        }
+        None => {
+            // Should not happen — we only call this when mcause indicates MSDEI.
+            error!("RDSM: msdei_handler called but mcause does not indicate MSDEI");
+        }
+    }
+}
+
 #[inline]
 fn enable_mtimer_if_no_sstc() {
     if !hart_extension_probe(current_hartid(), Extension::Sstc) {

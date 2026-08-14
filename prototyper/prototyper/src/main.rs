@@ -71,6 +71,13 @@ extern "C" fn rust_main(_hart_id: usize, opaque: usize, nonstandard_a2: usize) {
 
         // Detection Hart Features
         hart_features_detection();
+        // Initialize RDSM (Supervisor Domain substrate) on boot hart.
+        // PMP is already configured above, which protects RDSM firmware.
+        // MPT adds per-SD isolation; host SD starts permissive.
+        // NOTE: Non-boot harts are initialized with mmpt.MODE=Bare at reset.
+        // They must be programmed with the host MPT root before MPT
+        // restrictions are enforced in future phases.
+        crate::sbi::rdsm::rdsm_init();
         // Other harts task entry.
         trap_stack::prepare_for_trap();
         let priv_version = hart_privileged_version(hart_id);
@@ -157,6 +164,13 @@ extern "C" fn rust_main(_hart_id: usize, opaque: usize, nonstandard_a2: usize) {
         medeleg::clear_load_misaligned();
         medeleg::clear_store_misaligned();
         medeleg::clear_illegal_instruction();
+        // Clear access-fault delegation so MPT access violations trap to
+        // M-mode (handled by the RDSM fault handler).  Without this, the
+        // hardware would delegate instruction/load/store access faults to
+        // S-mode, bypassing the M-mode RDSM handler.
+        medeleg::clear_instruction_fault();
+        medeleg::clear_load_fault();
+        medeleg::clear_store_fault();
 
         let hart_priv_version = hart_privileged_version(current_hartid());
         if hart_priv_version >= PrivilegedVersion::Version1_11 {

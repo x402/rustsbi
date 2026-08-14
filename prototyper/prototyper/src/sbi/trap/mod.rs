@@ -28,6 +28,18 @@ pub extern "C" fn fast_handler(
     // Save mepc into context
     ctx.regs().pc = mepc::read();
 
+    // Check for MSDEI (Machine Supervisor Domain External Interrupt, mip bit 14)
+    // before the standard try_into() — the riscv crate v0.16 Interrupt enum
+    // does not include code 14, so try_into() would fail and panic.
+    let raw_mcause = mcause::read().bits();
+    let is_interrupt = (raw_mcause >> 63) & 1 == 1;
+    let code = raw_mcause & 0x7FFFFFFFFFFFFFFF;
+    if is_interrupt && code == rdsm::interrupt::MsdeiTrap::MSDEI_CODE {
+        let a0 = ctx.a0();
+        save_regs_and_handle_msdei(&mut ctx, &[a0, a1, a2, a3, a4, a5, a6, a7]);
+        return ctx.restore();
+    }
+
     let cause = match mcause::read().cause().try_into() {
         Ok(cause) => cause,
         Err(err) => {
@@ -50,6 +62,17 @@ pub extern "C" fn fast_handler(
         Trap::Interrupt(interrupt) => handle_interrupt(ctx, interrupt, save_regs),
         Trap::Exception(exception) => handle_exception(ctx, exception, save_regs),
     }
+}
+
+/// Save registers and handle an MSDEI interrupt.
+///
+/// MSDEI (Machine Supervisor Domain External Interrupt) traps to M-mode
+/// and must NOT be delegated to S-mode.  In Phase 1, only the host SID
+/// (SIDN 0) exists, so we log the pending SIDs and clear the enable mask
+/// to acknowledge.
+fn save_regs_and_handle_msdei(ctx: &mut FastContext, regs: &[usize; 8]) {
+    ctx.regs().a = *regs;
+    handler::msdei_handler();
 }
 
 fn handle_interrupt(
@@ -99,6 +122,55 @@ fn handle_exception(
         // TODO: Handle InstructionMisaligned
         Exception::InstructionMisaligned => {
             error!("TODO: Unhandled InstructionMisaligned exception");
+            unsupported_trap(Some(Trap::Exception(exception)))
+        }
+        // MPT access faults (InstructionFault=1, LoadFault=5, StoreFault=7)
+        // trap to M-mode and must NOT be delegated to S-mode.
+        // In Phase 1, the host MPT is permissive, so these should not trigger.
+        // If they do, log the fault and stop the violating hart.
+        Exception::InstructionFault => {
+            if let Some(fault) = rdsm::fault::MptFault::from_trap(
+                mcause::read().bits(),
+                riscv::register::mtval::read(),
+            ) {
+                error!(
+                    "RDSM: M-mode access fault (possibly MPT) at paddr=0x{:x}, stopping hart {} (instruction)",
+                    fault.paddr(),
+                    crate::riscv::current_hartid()
+                );
+                crate::fail::stop();
+            }
+            error!("Unhandled InstructionFault exception");
+            unsupported_trap(Some(Trap::Exception(exception)))
+        }
+        Exception::LoadFault => {
+            if let Some(fault) = rdsm::fault::MptFault::from_trap(
+                mcause::read().bits(),
+                riscv::register::mtval::read(),
+            ) {
+                error!(
+                    "RDSM: M-mode access fault (possibly MPT) at paddr=0x{:x}, stopping hart {} (load)",
+                    fault.paddr(),
+                    crate::riscv::current_hartid()
+                );
+                crate::fail::stop();
+            }
+            error!("Unhandled LoadFault exception");
+            unsupported_trap(Some(Trap::Exception(exception)))
+        }
+        Exception::StoreFault => {
+            if let Some(fault) = rdsm::fault::MptFault::from_trap(
+                mcause::read().bits(),
+                riscv::register::mtval::read(),
+            ) {
+                error!(
+                    "RDSM: M-mode access fault (possibly MPT) at paddr=0x{:x}, stopping hart {} (store)",
+                    fault.paddr(),
+                    crate::riscv::current_hartid()
+                );
+                crate::fail::stop();
+            }
+            error!("Unhandled StoreFault exception");
             unsupported_trap(Some(Trap::Exception(exception)))
         }
         Exception::IllegalInstruction => {
