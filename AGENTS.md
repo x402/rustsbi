@@ -110,6 +110,9 @@ The script greps the QEMU log for `Hello RustSBI!` and SBI test-pass markers, an
 
 Heavy: EDK2 build (`arceboot/scripts/test/build_edk2.sh`), disk image (`disk.sh`), ESP (`make_esp.sh`); needs `uuid-dev`, `qemu-system-misc`, Python 3.12. See `.github/workflows/arceboot.yml`. The `openEuler AIA` workflow boots openEuler 25.09 in Docker and only runs on a specific path filter.
 
+### 新增功能后的prototyper的测试
+在prototyper固件中加入新的扩展后，例如smmtt，由于QEMU仍未支持这些扩展，所以不需要用QEMU对prototyper进行验证。只需要用cargo验证即可。
+
 ## Conventions & PR checks
 
 - **DCO**: every non-merge commit must include a `Signed-off-by:` line (`.github/workflows/DCO.yml`).
