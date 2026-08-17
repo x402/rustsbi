@@ -9,6 +9,8 @@
 //! systems to facilitate invoking services provided by the Confidential VM Extension.
 #![no_std]
 
+// §9
+pub mod supd;
 // §10
 pub mod host;
 // §11
@@ -29,6 +31,14 @@ const fn eid_from_str(name: &str) -> i32 {
 #[cfg(test)]
 mod tests {
     use static_assertions::const_assert_eq;
+    // §9
+    #[test]
+    fn test_cove_supd() {
+        use crate::supd::*;
+        const_assert_eq!(0x53555044, EID_SUPD);
+        const_assert_eq!(0, GET_ACTIVE_DOMAINS);
+    }
+
     // §10
     #[test]
     fn test_cove_host() {
@@ -41,6 +51,7 @@ mod tests {
         const_assert_eq!(4, LOCAL_FENCE);
         const_assert_eq!(5, CREATE_TVM);
         const_assert_eq!(6, FINALIZE_TVM);
+        const_assert_eq!(7, PROMOTE_TO_TVM);
         const_assert_eq!(8, DESTROY_TVM);
         const_assert_eq!(9, ADD_TVM_MEMORY_REGION);
         const_assert_eq!(10, ADD_TVM_PAGE_TABLE_PAGES);
@@ -53,6 +64,14 @@ mod tests {
         const_assert_eq!(17, TVM_INVALIDATE_PAGES);
         const_assert_eq!(18, TVM_VALIDATE_PAGES);
         const_assert_eq!(19, TVM_REMOVE_PAGES);
+        const_assert_eq!(0, COVE_TSM_CAP_PROMOTE_TVM);
+        const_assert_eq!(1, COVE_TSM_CAP_ATTESTATION_LOCAL);
+        const_assert_eq!(2, COVE_TSM_CAP_ATTESTATION_REMOTE);
+        const_assert_eq!(3, COVE_TSM_CAP_AIA);
+        const_assert_eq!(4, COVE_TSM_CAP_MRIF);
+        const_assert_eq!(5, COVE_TSM_CAP_MEMORY_ALLOCATION);
+        const_assert_eq!(1, COVE_TSM_IMPL_SALUS);
+        const_assert_eq!(2, COVE_TSM_IMPL_ACE);
     }
 
     // §11
