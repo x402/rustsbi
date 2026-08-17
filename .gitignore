@@ -29,3 +29,6 @@ qemu-logs/
 # AI tooling
 .codex
 .humanize
+.opencode
+openspec/
+specs/
