@@ -56,6 +56,7 @@ extern "C" fn rust_main(_hart_id: usize, opaque: usize, nonstandard_a2: usize) {
 
         // parse the device tree
         let fdt_address = init_hart_info.fdt_address;
+        crate::sbi::rdsm::set_fdt_address(fdt_address);
 
         unsafe {
             PLATFORM.init(fdt_address);
@@ -117,6 +118,7 @@ extern "C" fn rust_main(_hart_id: usize, opaque: usize, nonstandard_a2: usize) {
         }
         let fdt_address = boot_hart_info.fdt_address;
         let fdt_address = firmware::patch_device_tree(fdt_address);
+        crate::sbi::rdsm::set_fdt_address(fdt_address);
 
         // Start kernel.
         local_remote_hsm().start(NextStage {

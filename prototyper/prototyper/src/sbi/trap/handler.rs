@@ -204,6 +204,13 @@ pub fn sbi_call_handler(
     a6: usize,
     a7: usize,
 ) -> FastResult {
+    // Handle private RDSM extension (EID 0x5244534D)
+    if a7 == crate::sbi::rdsm::EID_RDSM && a6 == crate::sbi::rdsm::FID_RDSM_TEERET {
+        if ctx.a0() == crate::sbi::rdsm::TSM_READY {
+            return crate::sbi::rdsm::handle_teeret(ctx);
+        }
+    }
+
     use sbi_spec::{base, hsm, legacy};
     let mut ret = unsafe {
         PLATFORM

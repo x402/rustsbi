@@ -606,4 +606,39 @@ mod tests {
             "destroy must free all 4 Smmpt52 pages"
         );
     }
+
+    #[test]
+    fn test_dual_mpt_cove_setup() {
+        let mut alloc = MockAlloc::new();
+        let mut conf_tree = MptTree::new(MptMode::Smmpt43, &mut alloc).unwrap();
+        let mut host_tree = MptTree::new(MptMode::Smmpt43, &mut alloc).unwrap();
+
+        let ram_start: usize = 0x8000_0000;
+        let tsm_load_paddr: usize = 0x8040_0000;
+        let host_load_paddr: usize = 0x8080_0000;
+
+        // MPT_CONF: Low memory + full RAM RWX
+        conf_tree.set_perm(0x1000, 0x1000, MptPerm::RWX, &mut alloc);
+        conf_tree.set_perm(ram_start, 0x1000, MptPerm::RWX, &mut alloc);
+        conf_tree.set_perm(tsm_load_paddr, 0x1000, MptPerm::RWX, &mut alloc);
+        conf_tree.set_perm(host_load_paddr, 0x1000, MptPerm::RWX, &mut alloc);
+
+        // MPT_HOST: Low memory RWX, RAM before TSM RWX, TSM NONE, Host RAM RWX
+        host_tree.set_perm(0x1000, 0x1000, MptPerm::RWX, &mut alloc);
+        host_tree.set_perm(ram_start, 0x1000, MptPerm::RWX, &mut alloc);
+        host_tree.set_perm(tsm_load_paddr, 0x1000, MptPerm::NONE, &mut alloc);
+        host_tree.set_perm(host_load_paddr, 0x1000, MptPerm::RWX, &mut alloc);
+
+        // Verify MPT_CONF permissions
+        assert_eq!(conf_tree.get_perm(0x1000), Some(MptPerm::RWX));
+        assert_eq!(conf_tree.get_perm(ram_start), Some(MptPerm::RWX));
+        assert_eq!(conf_tree.get_perm(tsm_load_paddr), Some(MptPerm::RWX));
+        assert_eq!(conf_tree.get_perm(host_load_paddr), Some(MptPerm::RWX));
+
+        // Verify MPT_HOST permissions
+        assert_eq!(host_tree.get_perm(0x1000), Some(MptPerm::RWX));
+        assert_eq!(host_tree.get_perm(ram_start), Some(MptPerm::RWX));
+        assert_eq!(host_tree.get_perm(tsm_load_paddr), Some(MptPerm::NONE));
+        assert_eq!(host_tree.get_perm(host_load_paddr), Some(MptPerm::RWX));
+    }
 }

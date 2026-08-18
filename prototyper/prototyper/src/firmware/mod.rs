@@ -1,13 +1,21 @@
 cfg_if::cfg_if! {
     if #[cfg(feature = "payload")] {
         pub mod payload;
-        pub use payload::{get_boot_info};
+        pub use payload::{get_boot_info, get_image_address};
     } else if #[cfg(feature = "jump")] {
         pub mod jump;
         pub use jump::{get_boot_info};
+        #[inline]
+        pub fn get_image_address() -> usize {
+            0
+        }
     } else {
         pub mod dynamic;
         pub use dynamic::{get_boot_info, read_paddr};
+        #[inline]
+        pub fn get_image_address() -> usize {
+            0
+        }
     }
 }
 

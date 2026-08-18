@@ -4,8 +4,13 @@ use riscv::register::mstatus;
 use super::BootInfo;
 
 pub fn get_boot_info(_nonstandard_a2: usize) -> BootInfo {
+    let next_address = if crate::sbi::rdsm::is_cove_payload() {
+        crate::sbi::rdsm::get_tsm_entry()
+    } else {
+        get_image_address()
+    };
     BootInfo {
-        next_address: get_image_address(),
+        next_address,
         mpp: mstatus::MPP::Supervisor,
     }
 }
@@ -17,6 +22,6 @@ pub extern "C" fn payload_image() {
 }
 
 #[inline]
-fn get_image_address() -> usize {
-    payload_image as usize
+pub fn get_image_address() -> usize {
+    payload_image as *const () as usize
 }

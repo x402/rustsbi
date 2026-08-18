@@ -33,4 +33,5 @@ pub mod fault;
 pub mod fence;
 pub mod interrupt;
 pub mod mpt;
+pub mod payload;
 pub mod probe;
