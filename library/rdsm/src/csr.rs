@@ -25,21 +25,23 @@ pub const CSR_MSIDEIP: u16 = 0xF4F;
 /// Machine Supervisor Domain External Interrupt Enable (smmtt §6.3.4).
 pub const CSR_MSIDEIE: u16 = 0x74F;
 
-// ── mmpt bit layout (assumed, SATP-like) ───────────────────────────────
+// ── mmpt bit layout ───────────────────────────────────────────────────
 //
-// The smmtt spec v0.49 does not fix exact bit positions for MODE/SDID/PPN.
-// We assume a layout analogous to SATP:
-//   MODE [63:60]  (4 bits, values 0–15)
-//   SDID [59:54]  (6 bits, SDIDMAX=6 → max 64 domains)
-//   PPN  [53:0]   (54 bits)
+// Layout matching Smmtt / NEMU implementation:
+//   MODE [63:60]  (4 bits, values 0–3)
+//   pad2 [59]     (1 bit, WPRI)
+//   pad1 [58]     (1 bit, WPRI)
+//   SDID [57:52]  (6 bits, SDIDMAX=6 → max 64 domains)
+//   pad0 [51:44]  (8 bits, WPRI)
+//   PPN  [43:0]   (44 bits)
 //
 // SDID field width is verified at runtime via WARL probing (see `probe`).
 
 const MODE_SHIFT: usize = 60;
 const MODE_BITS: usize = 4;
-const SDID_SHIFT: usize = 54;
+const SDID_SHIFT: usize = 52;
 const SDID_BITS: usize = 6;
-const PPN_BITS: usize = SDID_SHIFT; // 54
+const PPN_BITS: usize = 44;
 
 const fn field_mask(bits: usize) -> usize {
     (1 << bits) - 1

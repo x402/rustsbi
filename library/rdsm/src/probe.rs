@@ -106,17 +106,17 @@ pub fn probe_sdid_len(probe: &mut impl TrapSafeCsr) -> usize {
         None => return 0,
     };
 
-    // Write all 1s to the SDID field (bits [59:54]).
-    let all_ones_sdid = original | (0x3F << 54);
+    // Write all 1s to the SDID field (bits [57:52]).
+    let all_ones_sdid = original | (0x3F << 52);
     if !probe.write_csr(CSR_MMPT, all_ones_sdid) {
         // Restore and return 0.
         probe.write_csr(CSR_MMPT, original);
         return 0;
     }
 
-    // Read back and extract the SDID field manually (bits [59:54]).
+    // Read back and extract the SDID field manually (bits [57:52]).
     let readback = probe.read_csr(CSR_MMPT).unwrap_or(0);
-    let sdid_field = (readback >> 54) & 0x3F;
+    let sdid_field = (readback >> 52) & 0x3F;
 
     // Restore the original value.
     probe.write_csr(CSR_MMPT, original);

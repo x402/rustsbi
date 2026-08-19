@@ -6,11 +6,11 @@ pub const COVE_PAYLOAD_MAGIC: u32 = 0x434F5645;
 /// Current version of CoVE payload header.
 pub const COVE_PAYLOAD_VERSION: u32 = 1;
 
-/// CoVE Payload Header (4096 bytes / 1 page).
+/// CoVE Payload Header.
 #[repr(C)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct PayloadHeader {
-    /// Magic number (0x434F5645 "COVE").
+    /// Magic number (0x434F5645 \"COVE\").
     pub magic: u32,
     /// Header version (1).
     pub version: u32,
@@ -30,8 +30,6 @@ pub struct PayloadHeader {
     pub host_load_paddr: u64,
     /// Host physical entry point address.
     pub host_entry_paddr: u64,
-    /// Reserved padding to align to 4096 bytes (4 KiB page).
-    pub reserved: [u8; 4024],
 }
 
 impl PayloadHeader {
@@ -48,7 +46,7 @@ mod tests {
 
     #[test]
     fn test_payload_header_layout() {
-        assert_eq!(size_of::<PayloadHeader>(), 4096);
+        assert_eq!(size_of::<PayloadHeader>(), 72);
         assert_eq!(align_of::<PayloadHeader>(), 8);
 
         assert_eq!(offset_of!(PayloadHeader, magic), 0);
@@ -61,7 +59,6 @@ mod tests {
         assert_eq!(offset_of!(PayloadHeader, host_size), 48);
         assert_eq!(offset_of!(PayloadHeader, host_load_paddr), 56);
         assert_eq!(offset_of!(PayloadHeader, host_entry_paddr), 64);
-        assert_eq!(offset_of!(PayloadHeader, reserved), 72);
     }
 
     #[test]
@@ -77,7 +74,6 @@ mod tests {
             host_size: 0x800000,
             host_load_paddr: 0x80800000,
             host_entry_paddr: 0x80800000,
-            reserved: [0; 4024],
         };
         assert!(header.is_valid());
 

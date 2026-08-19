@@ -117,16 +117,16 @@ fn is_leaf(entry: u64) -> bool {
 
 /// Set the 3-bit XWR field for `page_index` (0..16) within a leaf MPTE.
 ///
-/// The XWR[i] field occupies bits `[18 + i*3 : 16 + i*3]`.
+/// The XWR[i] field occupies bits `[10 + i*3 : 8 + i*3]`.
 fn set_leaf_xwr(entry: u64, page_index: usize, xwr: u8) -> u64 {
-    let shift = 16 + page_index * 3;
+    let shift = 8 + page_index * 3;
     let mask = 0b111u64 << shift;
     (entry & !mask) | ((xwr as u64 & 0b111) << shift)
 }
 
 /// Extract the 3-bit XWR field for `page_index` (0..16) from a leaf MPTE.
 fn get_leaf_xwr(entry: u64, page_index: usize) -> u8 {
-    let shift = 16 + page_index * 3;
+    let shift = 8 + page_index * 3;
     ((entry >> shift) & 0b111) as u8
 }
 
@@ -253,8 +253,108 @@ impl MptTree {
             return;
         }
 
-        for page in start_page..=end_page {
-            self.set_perm_single(page << 12, perm, alloc);
+        let mut page = start_page;
+        while page <= end_page {
+            if page.is_multiple_of(8192) && page + 8191 <= end_page {
+                self.set_perm_table0(page << 12, perm, alloc);
+                page += 8192;
+            } else if page.is_multiple_of(16) && page + 15 <= end_page {
+                self.set_perm_16pages(page << 12, perm, alloc);
+                page += 16;
+            } else {
+                self.set_perm_single(page << 12, perm, alloc);
+                page += 1;
+            }
+        }
+    }
+
+    /// Set permission for an entire 32 MiB range (one complete Level 0 table, 512 leaf entries).
+    fn set_perm_table0(&mut self, pa: usize, perm: MptPerm, alloc: &mut impl MptPageAlloc) {
+        let levels = self.mode.levels();
+        let mut current_ppn = self.root_ppn;
+
+        // Walk from root down to level 1.
+        for level in (1..levels).rev() {
+            let idx = level_index(self.mode, pa, level);
+            let addr = (current_ppn << 12) + idx * 8;
+            let entry = unsafe { core::ptr::read_volatile(addr as *const u64) };
+
+            if !is_valid(entry) {
+                if let Some(new_ppn) = alloc.alloc_page() {
+                    unsafe {
+                        core::ptr::write_bytes((new_ppn << 12) as *mut u8, 0, 4096);
+                    }
+                    let new_entry = encode_non_leaf(new_ppn);
+                    unsafe {
+                        core::ptr::write_volatile(addr as *mut u64, new_entry);
+                    }
+                    current_ppn = new_ppn;
+                } else {
+                    return;
+                }
+            } else if !is_leaf(entry) {
+                current_ppn = decode_non_leaf_ppn(entry);
+            } else {
+                return;
+            }
+        }
+
+        // At level 1, `current_ppn` is the level 0 table (or we just created it).
+        let mut full_leaf = V_BIT | L_BIT;
+        let p = perm.to_bits();
+        for pi in 0..16 {
+            full_leaf = set_leaf_xwr(full_leaf, pi, p);
+        }
+
+        for idx in 0..512 {
+            let leaf_addr = (current_ppn << 12) + idx * 8;
+            unsafe {
+                core::ptr::write_volatile(leaf_addr as *mut u64, full_leaf);
+            }
+        }
+    }
+
+    /// Set permission for a 64 KiB block (16 contiguous 4 KiB pages, one leaf MPTE).
+    fn set_perm_16pages(&mut self, pa: usize, perm: MptPerm, alloc: &mut impl MptPageAlloc) {
+        let levels = self.mode.levels();
+        let mut current_ppn = self.root_ppn;
+
+        // Walk from root down to level 1.
+        for level in (1..levels).rev() {
+            let idx = level_index(self.mode, pa, level);
+            let addr = (current_ppn << 12) + idx * 8;
+            let entry = unsafe { core::ptr::read_volatile(addr as *const u64) };
+
+            if !is_valid(entry) {
+                if let Some(new_ppn) = alloc.alloc_page() {
+                    unsafe {
+                        core::ptr::write_bytes((new_ppn << 12) as *mut u8, 0, 4096);
+                    }
+                    let new_entry = encode_non_leaf(new_ppn);
+                    unsafe {
+                        core::ptr::write_volatile(addr as *mut u64, new_entry);
+                    }
+                    current_ppn = new_ppn;
+                } else {
+                    return;
+                }
+            } else if !is_leaf(entry) {
+                current_ppn = decode_non_leaf_ppn(entry);
+            } else {
+                return;
+            }
+        }
+
+        // Level 0: leaf entry.
+        let leaf_idx = level_index(self.mode, pa, 0);
+        let leaf_addr = (current_ppn << 12) + leaf_idx * 8;
+        let mut full_leaf = V_BIT | L_BIT;
+        let p = perm.to_bits();
+        for pi in 0..16 {
+            full_leaf = set_leaf_xwr(full_leaf, pi, p);
+        }
+        unsafe {
+            core::ptr::write_volatile(leaf_addr as *mut u64, full_leaf);
         }
     }
 

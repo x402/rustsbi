@@ -228,23 +228,29 @@ impl Platform {
         };
 
         for device_id in compatible.iter() {
-            if UART16650U8_COMPATIBLE.contains(&device_id) {
-                self.info.console = Some((regs.start, MachineConsoleType::Uart16550U8));
-            }
             if UART16650U32_COMPATIBLE.contains(&device_id) {
                 self.info.console = Some((regs.start, MachineConsoleType::Uart16550U32));
+                break;
+            }
+            if UART16650U8_COMPATIBLE.contains(&device_id) {
+                self.info.console = Some((regs.start, MachineConsoleType::Uart16550U8));
+                break;
             }
             if UARTAXILITE_COMPATIBLE.contains(&device_id) {
                 self.info.console = Some((regs.start, MachineConsoleType::UartAxiLite));
+                break;
             }
             if UARTBFLB_COMPATIBLE.contains(&device_id) {
                 self.info.console = Some((regs.start, MachineConsoleType::UartBflb));
+                break;
             }
             if UARTSIFIVE_COMPATIBLE.contains(&device_id) {
                 self.info.console = Some((regs.start, MachineConsoleType::UartSifive));
+                break;
             }
             if UARTPL011_COMPATIBLE.contains(&device_id) {
                 self.info.console = Some((regs.start, MachineConsoleType::UartPl011));
+                break;
             }
         }
 

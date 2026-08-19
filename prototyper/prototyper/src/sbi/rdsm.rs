@@ -141,7 +141,7 @@ pub fn check_and_load_cove_payload() -> bool {
         return false;
     }
 
-    let header = unsafe { core::ptr::read_volatile(payload_base as *const PayloadHeader) };
+    let header = unsafe { &*(payload_base as *const PayloadHeader) };
     if header.version != COVE_PAYLOAD_VERSION {
         warn!(
             "RDSM: Found CoVE payload magic but unsupported version {}",
@@ -303,15 +303,11 @@ unsafe fn csr_write_allow_dyn(csr: u16, trap_info: *mut TrapInfo, value: usize) 
 
 // ── MPT page bump allocator ────────────────────────────────────────────
 
-/// Size of the MPT page pool (512 KiB = 128 pages of 4 KiB).
-const MPT_PAGE_POOL_SIZE: usize = 512 * 1024;
+/// Size of the MPT page pool (4 MiB = 1024 pages of 4 KiB).
+const MPT_PAGE_POOL_SIZE: usize = 4 * 1024 * 1024;
 
-/// Static buffer in BSS that backs the MPT bump allocator.
-///
-/// The linker places this in its own section `.bss.mpt_pool` so that it is
-/// zeroed along with the rest of BSS and does not overlap with other data.
-#[unsafe(link_section = ".bss.mpt_pool")]
-static mut MPT_PAGE_POOL: [u8; MPT_PAGE_POOL_SIZE] = [0; MPT_PAGE_POOL_SIZE];
+/// Base physical address of the MPT page pool in reserved memory (0x8090_0000).
+const MPT_PAGE_POOL_PADDR: usize = 0x8090_0000;
 
 /// A simple bump-pointer allocator that hands out 4 KiB pages from a
 /// contiguous physical memory region.
@@ -338,10 +334,9 @@ impl MptBumpAlloc {
         }
     }
 
-    /// Create a bump allocator backed by the static [`MPT_PAGE_POOL`].
+    /// Create a bump allocator backed by the reserved MPT page pool.
     fn from_pool() -> Self {
-        let paddr = mpt_page_pool_paddr();
-        Self::new(paddr, MPT_PAGE_POOL_SIZE)
+        Self::new(MPT_PAGE_POOL_PADDR, MPT_PAGE_POOL_SIZE)
     }
 
     /// Allocate `num_pages` contiguous 4 KiB pages and return the PPN of
@@ -377,23 +372,6 @@ impl MptPageAlloc for MptBumpAlloc {
     fn free_page(&mut self, _ppn: usize) {
         // Bump allocator: no-op.  Pages are not reclaimed in Phase 1.
     }
-}
-
-/// Return the physical (runtime) address of the [`MPT_PAGE_POOL`] static.
-///
-/// Uses `la` to obtain the address.  In M-mode PIE firmware the runtime
-/// virtual address equals the physical address after relocation.
-fn mpt_page_pool_paddr() -> usize {
-    let addr: usize;
-    unsafe {
-        core::arch::asm!(
-            "la {addr}, {sym}",
-            addr = out(reg) addr,
-            sym = sym MPT_PAGE_POOL,
-            options(nomem),
-        );
-    }
-    addr
 }
 
 // ── Global domain ID allocators ────────────────────────────────────────
