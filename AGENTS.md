@@ -110,8 +110,11 @@ The script greps the QEMU log for `Hello RustSBI!` and SBI test-pass markers, an
 
 Heavy: EDK2 build (`arceboot/scripts/test/build_edk2.sh`), disk image (`disk.sh`), ESP (`make_esp.sh`); needs `uuid-dev`, `qemu-system-misc`, Python 3.12. See `.github/workflows/arceboot.yml`. The `openEuler AIA` workflow boots openEuler 25.09 in Docker and only runs on a specific path filter.
 
-### 新增功能后的prototyper的测试
-在prototyper固件中加入新的扩展后，例如smmtt，由于QEMU仍未支持这些扩展，所以不需要用QEMU对prototyper进行验证。只需要用cargo验证即可。
+### 新增功能后的 prototyper 测试与运行纪律
+- **支持自主编译与测试**：在 prototyper 固件或 `rdsm` 库中加入/修改扩展后，允许代理直接执行 `cargo check`、`cargo test`、`cargo prototyper` 编译并使用 NEMU（如 `/home/x402/smmtt/NEMU-cove/build/riscv64-nemu-interpreter -b <payload> -I 10000000`）运行验证。
+- **Token 节流约束**：
+  - 严禁执行未加过滤的巨型输出命令（如裸跑 `readelf -s`、`objdump`、`rust-nm` 或全量未截断的 build trace）。
+  - 符号与反汇编排查必须使用 `grep` / `head -n 30` / `tail -n 30` 管道，单次输出严格控制在 50 行内。
 
 ## Conventions & PR checks
 

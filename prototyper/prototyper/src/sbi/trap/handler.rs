@@ -204,11 +204,40 @@ pub fn sbi_call_handler(
     a6: usize,
     a7: usize,
 ) -> FastResult {
-    // Handle private RDSM extension (EID 0x5244534D)
-    if a7 == crate::sbi::rdsm::EID_RDSM && a6 == crate::sbi::rdsm::FID_RDSM_TEERET {
-        if ctx.a0() == crate::sbi::rdsm::TSM_READY {
-            return crate::sbi::rdsm::handle_teeret(ctx);
+    // 1. Handle private RDSM extension (EID 0x5244534D)
+    if a7 == crate::sbi::rdsm::EID_RDSM {
+        ctx.regs().a = [ctx.a0(), a1, a2, a3, a4, a5, a6, a7];
+        return ctx.continue_with(crate::sbi::rdsm::handle_rdsm_entire, ());
+    }
+
+    // 2. Handle SUPD extension (EID 0x53555044)
+    if a7 == crate::sbi::rdsm::EID_SUPD {
+        if a6 == 0 {
+            // FID 0: sbi_supd_get_active_domains -> error=0, value=0b11 (Host bit 0 + Confidential bit 1)
+            ctx.regs().a[0] = 0;
+            ctx.regs().a[1] = 0b11;
+        } else {
+            ctx.regs().a[0] = (-1isize) as usize; // SBI_ERR_NOT_SUPPORTED
+            ctx.regs().a[1] = 0;
         }
+        let epc = mepc::read();
+        unsafe { mepc::write(epc + get_inst(epc).1) };
+        return ctx.restore();
+    }
+
+    // 3. Handle COVH (0x434F5648) and COVI (0x434F5649) forward to TSM (TEECALL)
+    if a7 == crate::sbi::rdsm::EID_COVH || a7 == crate::sbi::rdsm::EID_COVI {
+        if !crate::sbi::rdsm::is_tsm_ready() {
+            ctx.regs().a[0] = (-2isize) as usize; // SBI_ERR_FAILED
+            ctx.regs().a[1] = 0;
+            let epc = mepc::read();
+            unsafe {
+                mepc::write(epc + get_inst(epc).1);
+            }
+            return ctx.restore();
+        }
+        ctx.regs().a = [ctx.a0(), a1, a2, a3, a4, a5, a6, a7];
+        return ctx.continue_with(crate::sbi::rdsm::handle_teecall_entire, ());
     }
 
     use sbi_spec::{base, hsm, legacy};
@@ -230,6 +259,15 @@ pub fn sbi_call_handler(
                 }
                 legacy::LEGACY_CONSOLE_PUTCHAR | legacy::LEGACY_CONSOLE_GETCHAR => {
                     ret.value = 1;
+                }
+                crate::sbi::rdsm::EID_SUPD => {
+                    ret.value = 1;
+                }
+                crate::sbi::rdsm::EID_COVH => {
+                    ret.value = crate::sbi::rdsm::is_tsm_ready() as usize;
+                }
+                crate::sbi::rdsm::EID_COVI => {
+                    ret.value = 0;
                 }
                 _ => {}
             },

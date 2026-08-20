@@ -214,6 +214,11 @@ impl MptTree {
         Some(Self { mode, root_ppn })
     }
 
+    /// Create an `MptTree` from an existing mode and root PPN without allocation.
+    pub const fn from_root(mode: MptMode, root_ppn: usize) -> Self {
+        Self { mode, root_ppn }
+    }
+
     /// Return the root PPN of this tree.
     pub const fn root_ppn(&self) -> usize {
         self.root_ppn

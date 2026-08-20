@@ -11,7 +11,7 @@
 //! 2. MPT adds per-SD isolation on top of PMP.
 //! 3. The spec requires "MPT and e(PMP) are always active" when Smsdid is
 //!    implemented.
-//! 4. Access check order: page table → PMP → MPT → all must pass.
+//! 4. Access check order: page table -> PMP -> MPT -> all must pass.
 
 use core::cell::Cell;
 
@@ -26,11 +26,195 @@ pub use rdsm::payload::{COVE_PAYLOAD_MAGIC, COVE_PAYLOAD_VERSION, PayloadHeader}
 /// Extension ID for private RDSM SBI extension: 0x5244534D ("RDSM").
 pub const EID_RDSM: usize = 0x5244534D;
 
+/// Function ID for RDSM_GET_INFO: 0.
+pub const FID_RDSM_GET_INFO: usize = 0;
+
+/// Function ID for RDSM_MPT_SET: 1.
+pub const FID_RDSM_MPT_SET: usize = 1;
+
+/// Function ID for RDSM_MFENCE_PA: 2.
+pub const FID_RDSM_MFENCE_PA: usize = 2;
+
 /// Function ID for RDSM_TEERET: 3.
 pub const FID_RDSM_TEERET: usize = 3;
 
+// ── TEERET Reason constants ────────────────────────────────────────────
+
+/// Parameter a0 value for NORMAL_RETURN: 0.
+#[allow(dead_code)]
+pub const NORMAL_RETURN: usize = 0;
+
+/// Parameter a0 value for TVM_EXIT: 1.
+#[allow(dead_code)]
+pub const TVM_EXIT: usize = 1;
+
 /// Parameter a0 value for TSM_READY: 2.
+#[allow(dead_code)]
 pub const TSM_READY: usize = 2;
+
+// ── CoVE Extension ID constants ─────────────────────────────────────────
+
+/// Extension ID for Supervisor Domains Enumeration Extension: 0x53555044 ("SUPD").
+pub const EID_SUPD: usize = 0x53555044;
+
+/// Extension ID for CoVE Host Extension: 0x434F5648 ("COVH").
+pub const EID_COVH: usize = 0x434F5648;
+
+/// Extension ID for CoVE Interrupt Extension: 0x434F5649 ("COVI").
+pub const EID_COVI: usize = 0x434F5649;
+
+// ── THCS (Thread/Hart Context Structure) & DomainContext ────────────────
+
+/// Context of a supervisor domain (Host or TSM/Confidential).
+/// Contains general-purpose registers and S-mode CSRs.
+#[repr(C)]
+#[derive(Clone, Copy, Debug)]
+pub struct DomainContext {
+    // GPRs
+    pub ra: usize,
+    pub sp: usize,
+    pub gp: usize,
+    pub tp: usize,
+    pub t: [usize; 7],
+    pub s: [usize; 12],
+    pub a: [usize; 8],
+    pub pc: usize,
+
+    // S-mode CSRs
+    pub sstatus: usize,
+    pub stvec: usize,
+    pub sip: usize,
+    pub sie: usize,
+    pub scounteren: usize,
+    pub sscratch: usize,
+    pub satp: usize,
+}
+
+impl DomainContext {
+    pub const fn new() -> Self {
+        Self {
+            ra: 0,
+            sp: 0,
+            gp: 0,
+            tp: 0,
+            t: [0; 7],
+            s: [0; 12],
+            a: [0; 8],
+            pc: 0,
+            sstatus: 0,
+            stvec: 0,
+            sip: 0,
+            sie: 0,
+            scounteren: 0,
+            sscratch: 0,
+            satp: 0,
+        }
+    }
+}
+
+/// Thread / Hart Context Structure (THCS).
+/// Manages domain execution contexts (Host Save State Area: hssa, TSM Save State Area: tssa)
+/// and TSM readiness status.
+#[derive(Clone, Copy, Debug)]
+pub struct Thcs {
+    pub hssa: DomainContext,
+    pub tssa: DomainContext,
+    pub tsm_ready: bool,
+}
+
+impl Thcs {
+    pub const fn new() -> Self {
+        Self {
+            hssa: DomainContext::new(),
+            tssa: DomainContext::new(),
+            tsm_ready: false,
+        }
+    }
+}
+
+pub static mut THCS: Thcs = Thcs::new();
+
+#[inline]
+#[allow(dead_code)]
+pub fn thcs() -> &'static Thcs {
+    unsafe { &THCS }
+}
+
+#[inline]
+#[allow(dead_code)]
+pub unsafe fn thcs_mut() -> &'static mut Thcs {
+    unsafe { &mut THCS }
+}
+
+#[inline]
+#[allow(dead_code)]
+pub fn is_tsm_ready() -> bool {
+    unsafe { THCS.tsm_ready }
+}
+
+#[inline(always)]
+unsafe fn read_csrs(
+    sstatus: &mut usize,
+    stvec: &mut usize,
+    sip: &mut usize,
+    sie: &mut usize,
+    scounteren: &mut usize,
+    sscratch: &mut usize,
+    satp: &mut usize,
+) {
+    #[cfg(target_arch = "riscv64")]
+    unsafe {
+        core::arch::asm!(
+            "csrr {sstatus}, sstatus",
+            "csrr {stvec}, stvec",
+            "csrr {sip}, sip",
+            "csrr {sie}, sie",
+            "csrr {scounteren}, scounteren",
+            "csrr {sscratch}, sscratch",
+            "csrr {satp}, satp",
+            sstatus = out(reg) * sstatus,
+            stvec = out(reg) * stvec,
+            sip = out(reg) * sip,
+            sie = out(reg) * sie,
+            scounteren = out(reg) * scounteren,
+            sscratch = out(reg) * sscratch,
+            satp = out(reg) * satp,
+            options(nomem)
+        );
+    }
+}
+
+#[inline(always)]
+unsafe fn write_csrs(
+    sstatus: usize,
+    stvec: usize,
+    sip: usize,
+    sie: usize,
+    scounteren: usize,
+    sscratch: usize,
+    satp: usize,
+) {
+    #[cfg(target_arch = "riscv64")]
+    unsafe {
+        core::arch::asm!(
+            "csrw sstatus, {sstatus}",
+            "csrw stvec, {stvec}",
+            "csrw sip, {sip}",
+            "csrw sie, {sie}",
+            "csrw scounteren, {scounteren}",
+            "csrw sscratch, {sscratch}",
+            "csrw satp, {satp}",
+            sstatus = in(reg) sstatus,
+            stvec = in(reg) stvec,
+            sip = in(reg) sip,
+            sie = in(reg) sie,
+            scounteren = in(reg) scounteren,
+            sscratch = in(reg) sscratch,
+            satp = in(reg) satp,
+            options(nomem)
+        );
+    }
+}
 
 // ── Global RDSM context ────────────────────────────────────────────────
 
@@ -177,6 +361,7 @@ pub fn check_and_load_cove_payload() -> bool {
     }
 
     // Instruction and data memory fences
+    #[cfg(target_arch = "riscv64")]
     unsafe {
         core::arch::asm!("fence.i", options(nostack));
         core::arch::asm!("fence rw, rw", options(nostack));
@@ -270,7 +455,7 @@ unsafe fn csr_read_allow_dyn(csr: u16, trap_info: *mut TrapInfo) -> usize {
             csr_read_allow::<{ crate::riscv::csr::CSR_MSDCFG }>(trap_info)
         },
         _ => {
-            // Unknown / unimplemented CSR — write mcause = 0 (trap occurred).
+            // Unknown / unimplemented CSR - write mcause = 0 (trap occurred).
             unsafe { core::ptr::write_volatile(&mut (*trap_info).mcause, 0) };
             0
         }
@@ -295,7 +480,7 @@ unsafe fn csr_write_allow_dyn(csr: u16, trap_info: *mut TrapInfo, value: usize) 
             csr_write_allow::<{ crate::riscv::csr::CSR_MSDCFG }>(trap_info, value)
         },
         _ => {
-            // Unknown / unimplemented CSR — write mcause = 0 (trap occurred).
+            // Unknown / unimplemented CSR - write mcause = 0 (trap occurred).
             unsafe { core::ptr::write_volatile(&mut (*trap_info).mcause, 0) };
         }
     }
@@ -422,7 +607,7 @@ pub unsafe fn rdsm_sidn_allocator() -> &'static mut SidnAllocator {
 ///    `MFENCE.PA`.
 /// 5. Switches to the host interrupt domain by setting `msdcfg.SIDN = 0`.
 ///
-/// The MPT tree is intentionally leaked — it must persist for the
+/// The MPT tree is intentionally leaked - it must persist for the
 /// firmware's lifetime.
 ///
 /// # Boot Flow Ordering
@@ -523,7 +708,7 @@ pub fn rdsm_init() {
     // Set permissive permissions for the platform address range.
     //
     // Phase 1 covers only the platform's memory region to keep page-pool
-    // usage bounded.  Full address-space coverage (0 … usize::MAX) requires
+    // usage bounded.  Full address-space coverage (0 ... usize::MAX) requires
     // NAPOT support and is deferred to a future phase.
     let memory_range = match unsafe { crate::platform::PLATFORM.info.memory_range.as_ref() } {
         Some(range) => range.clone(),
@@ -534,7 +719,7 @@ pub fn rdsm_init() {
     };
 
     info!(
-        "RDSM: Setting MPT permissions for range 0x{:x} – 0x{:x}",
+        "RDSM: Setting MPT permissions for range 0x{:x} - 0x{:x}",
         memory_range.start, memory_range.end
     );
 
@@ -638,32 +823,391 @@ pub fn rdsm_init() {
     info!("RDSM: Initialization complete");
 }
 
-/// Handle RDSM_TEERET SBI call (EID 0x5244534D, FID 3).
+/// Handle COVH / COVI SBI calls (TEECALL) from Host using EntireContext.
 ///
-/// Switches domain to Host (SDID=0, MPT_HOST) and transfers control to Host entry address.
-pub fn handle_teeret(ctx: fast_trap::FastContext) -> fast_trap::FastResult {
-    println!("[RDSM] Switching to Host Domain (SDID=0)...");
-    info!("[RDSM] Switching to Host Domain (SDID=0)...");
+/// Saves Host context to `THCS.hssa`, switches `mmpt` to SDID=1 (Confidential domain),
+/// restores TSM context / S-mode CSRs, passes Host arguments `a0..a7` into `regs.a`,
+/// sets `pc = tssa.pc, sp = tssa.sp, gp = tssa.gp, tp = tssa.tp`, and returns `ctx.restore()`.
+pub extern "C" fn handle_teecall_entire(ctx: fast_trap::EntireContext) -> fast_trap::EntireResult {
+    let (mut ctx, _) = ctx.split();
+    let regs = ctx.regs();
 
+    let epc = riscv::register::mepc::read();
+    let next_pc = epc + crate::sbi::trap::helper::get_inst(epc).1;
+    let sp = riscv::register::mscratch::read();
+    let gp = crate::sbi::trap::helper::read_gp();
+    let tp = crate::sbi::trap::helper::read_tp();
+
+    let host_a = regs.a;
+
+    // 1. Save Host context to THCS.hssa
+    unsafe {
+        let th = thcs_mut();
+        th.hssa.ra = regs.ra;
+        th.hssa.sp = sp;
+        th.hssa.gp = gp;
+        th.hssa.tp = tp;
+        th.hssa.t = regs.t;
+        th.hssa.s = regs.s;
+        th.hssa.a = host_a;
+        th.hssa.pc = next_pc;
+
+        read_csrs(
+            &mut th.hssa.sstatus,
+            &mut th.hssa.stvec,
+            &mut th.hssa.sip,
+            &mut th.hssa.sie,
+            &mut th.hssa.scounteren,
+            &mut th.hssa.sscratch,
+            &mut th.hssa.satp,
+        );
+    }
+
+    // 2. Switch mmpt to SDID=1 (Confidential domain MPT_CONF_ROOT), mfence_pa(0, 0), SIDN=1
     let r_ctx = rdsm_context();
     let mpt_mode = r_ctx.mpt_mode.unwrap_or(rdsm::csr::MptMode::Bare);
-    let host_root_ppn = r_ctx.host_root_ppn;
+    let conf_root_ppn = r_ctx.conf_root_ppn;
 
     #[cfg(target_arch = "riscv64")]
     {
-        let mmpt = rdsm::csr::Mmpt::from_parts(mpt_mode, 0, host_root_ppn);
+        let mmpt = rdsm::csr::Mmpt::from_parts(mpt_mode, 1, conf_root_ppn);
         mmpt.write();
         rdsm::fence::mfence_pa(0, 0);
-        rdsm::interrupt::switch_interrupt_domain(0);
+        rdsm::interrupt::switch_interrupt_domain(1);
     }
 
-    let host_entry_paddr = r_ctx.host_entry_paddr;
-    let fdt_address = r_ctx.fdt_address;
-
+    // 3. Restore TSM S-mode CSRs & context
+    let th = thcs();
     unsafe {
-        riscv::register::mstatus::set_mpie();
-        riscv::register::mstatus::set_mpp(riscv::register::mstatus::MPP::Supervisor);
+        write_csrs(
+            th.tssa.sstatus,
+            th.tssa.stvec,
+            th.tssa.sip,
+            th.tssa.sie,
+            th.tssa.scounteren,
+            th.tssa.sscratch,
+            th.tssa.satp,
+        );
     }
 
-    crate::sbi::trap::handler::switch(ctx, host_entry_paddr, fdt_address)
+    let tsm_pc = th.tssa.pc;
+    let tsm_sp = th.tssa.sp;
+    let tsm_gp = th.tssa.gp;
+    let tsm_tp = th.tssa.tp;
+
+    // Pass Host arguments a0..a7 to TSM
+    regs.a = host_a;
+    regs.ra = th.tssa.ra;
+    regs.t = th.tssa.t;
+    regs.s = th.tssa.s;
+    regs.pc = tsm_pc;
+    regs.sp = tsm_sp;
+    regs.gp = tsm_gp;
+    regs.tp = tsm_tp;
+
+    crate::sbi::trap::helper::write_gp(tsm_gp);
+    crate::sbi::trap::helper::write_tp(tsm_tp);
+    unsafe {
+        riscv::register::mscratch::write(tsm_sp);
+        riscv::register::mepc::write(tsm_pc);
+        riscv::register::mstatus::set_mpp(riscv::register::mstatus::MPP::Supervisor);
+        riscv::register::mstatus::set_mpie();
+    }
+
+    ctx.restore()
+}
+
+/// Handle RDSM SBI extension calls (EID 0x5244534D) using EntireContext.
+pub extern "C" fn handle_rdsm_entire(ctx: fast_trap::EntireContext) -> fast_trap::EntireResult {
+    let (mut ctx, _) = ctx.split();
+    let regs = ctx.regs();
+
+    let fid = regs.a[6];
+    match fid {
+        FID_RDSM_GET_INFO => {
+            let r_ctx = rdsm_context();
+            let mode_val = r_ctx.mpt_mode.map_or(0, |m| m as usize);
+            regs.a[0] = 0; // SBI_SUCCESS
+            regs.a[1] = mode_val;
+            let epc = riscv::register::mepc::read();
+            unsafe {
+                riscv::register::mepc::write(epc + crate::sbi::trap::helper::get_inst(epc).1);
+            }
+            ctx.restore()
+        }
+        FID_RDSM_MPT_SET => {
+            let target_sdid = regs.a[0];
+            let paddr = regs.a[1];
+            let len = regs.a[2];
+            let perm_bits = regs.a[3] as u8;
+
+            let perm = match rdsm::mpt::MptPerm::from_bits(perm_bits) {
+                Some(p) => p,
+                None => {
+                    regs.a[0] = (-3isize) as usize; // SBI_ERR_INVALID_PARAM
+                    regs.a[1] = 0;
+                    let epc = riscv::register::mepc::read();
+                    unsafe {
+                        riscv::register::mepc::write(
+                            epc + crate::sbi::trap::helper::get_inst(epc).1,
+                        );
+                    }
+                    return ctx.restore();
+                }
+            };
+
+            let r_ctx = rdsm_context();
+            let mode = match r_ctx.mpt_mode {
+                Some(m) => m,
+                None => {
+                    regs.a[0] = (-2isize) as usize; // SBI_ERR_FAILED
+                    regs.a[1] = 0;
+                    let epc = riscv::register::mepc::read();
+                    unsafe {
+                        riscv::register::mepc::write(
+                            epc + crate::sbi::trap::helper::get_inst(epc).1,
+                        );
+                    }
+                    return ctx.restore();
+                }
+            };
+
+            let root_ppn = if target_sdid == r_ctx.host_sdid {
+                r_ctx.host_root_ppn
+            } else if target_sdid == r_ctx.conf_sdid {
+                r_ctx.conf_root_ppn
+            } else {
+                regs.a[0] = (-3isize) as usize; // SBI_ERR_INVALID_PARAM
+                regs.a[1] = 0;
+                let epc = riscv::register::mepc::read();
+                unsafe {
+                    riscv::register::mepc::write(epc + crate::sbi::trap::helper::get_inst(epc).1);
+                }
+                return ctx.restore();
+            };
+
+            let mut tree = rdsm::mpt::MptTree::from_root(mode, root_ppn);
+            let mut alloc = MptBumpAlloc::from_pool();
+            tree.set_perm(paddr, len, perm, &mut alloc);
+            core::mem::forget(tree);
+
+            regs.a[0] = 0; // SBI_SUCCESS
+            regs.a[1] = 0;
+            let epc = riscv::register::mepc::read();
+            unsafe {
+                riscv::register::mepc::write(epc + crate::sbi::trap::helper::get_inst(epc).1);
+            }
+            ctx.restore()
+        }
+        FID_RDSM_MFENCE_PA => {
+            let paddr = regs.a[0];
+            let sdid = regs.a[1];
+            #[cfg(target_arch = "riscv64")]
+            rdsm::fence::mfence_pa(paddr, sdid);
+
+            regs.a[0] = 0; // SBI_SUCCESS
+            regs.a[1] = 0;
+            let epc = riscv::register::mepc::read();
+            unsafe {
+                riscv::register::mepc::write(epc + crate::sbi::trap::helper::get_inst(epc).1);
+            }
+            ctx.restore()
+        }
+        FID_RDSM_TEERET => {
+            let reason = regs.a[0];
+            match reason {
+                TSM_READY => {
+                    let a1 = regs.a[1];
+                    let r_ctx = rdsm_context();
+                    let tsm_entry = if a1 != 0 { a1 } else { r_ctx.tsm_entry_paddr };
+                    let sp = riscv::register::mscratch::read();
+                    let gp = crate::sbi::trap::helper::read_gp();
+                    let tp = crate::sbi::trap::helper::read_tp();
+
+                    unsafe {
+                        let th = thcs_mut();
+                        th.tssa.pc = tsm_entry;
+                        th.tssa.sp = sp;
+                        th.tssa.gp = gp;
+                        th.tssa.tp = tp;
+                        th.tssa.ra = regs.ra;
+                        th.tssa.t = regs.t;
+                        th.tssa.s = regs.s;
+                        th.tssa.a = regs.a;
+
+                        read_csrs(
+                            &mut th.tssa.sstatus,
+                            &mut th.tssa.stvec,
+                            &mut th.tssa.sip,
+                            &mut th.tssa.sie,
+                            &mut th.tssa.scounteren,
+                            &mut th.tssa.sscratch,
+                            &mut th.tssa.satp,
+                        );
+
+                        th.tsm_ready = true;
+                    }
+
+                    println!("[RDSM] Switching to Host Domain (SDID=0)...");
+                    info!("[RDSM] Switching to Host Domain (SDID=0)...");
+
+                    let mpt_mode = r_ctx.mpt_mode.unwrap_or(rdsm::csr::MptMode::Bare);
+                    let host_root_ppn = r_ctx.host_root_ppn;
+
+                    #[cfg(target_arch = "riscv64")]
+                    {
+                        let mmpt = rdsm::csr::Mmpt::from_parts(mpt_mode, 0, host_root_ppn);
+                        mmpt.write();
+                        rdsm::fence::mfence_pa(0, 0);
+                        rdsm::interrupt::switch_interrupt_domain(0);
+                    }
+
+                    let host_entry_paddr = r_ctx.host_entry_paddr;
+                    let fdt_address = r_ctx.fdt_address;
+
+                    unsafe {
+                        if host_entry_paddr & 0x3 == 0 {
+                            core::arch::asm!(
+                                "csrw stvec, {host_entry_paddr}",
+                                host_entry_paddr = in(reg) host_entry_paddr,
+                                options(nomem),
+                            );
+                        }
+                        core::arch::asm!("csrw sscratch, zero", "csrw sie, zero", options(nomem));
+                        riscv::register::sstatus::clear_sie();
+                        riscv::register::satp::write(riscv::register::satp::Satp::from_bits(0));
+                        riscv::register::mstatus::set_mpie();
+                        riscv::register::mstatus::set_mpp(
+                            riscv::register::mstatus::MPP::Supervisor,
+                        );
+                        riscv::register::mepc::write(host_entry_paddr);
+                    }
+
+                    regs.a[0] = crate::riscv::current_hartid();
+                    regs.a[1] = fdt_address;
+                    regs.pc = host_entry_paddr;
+
+                    ctx.restore()
+                }
+                NORMAL_RETURN => {
+                    let epc = riscv::register::mepc::read();
+                    let next_pc = epc + crate::sbi::trap::helper::get_inst(epc).1;
+                    let sp = riscv::register::mscratch::read();
+                    let gp = crate::sbi::trap::helper::read_gp();
+                    let tp = crate::sbi::trap::helper::read_tp();
+
+                    let tsm_err = regs.a[1];
+                    let tsm_val = regs.a[2];
+
+                    // 1. Save TSM context to THCS.tssa
+                    unsafe {
+                        let th = thcs_mut();
+                        th.tssa.ra = regs.ra;
+                        th.tssa.sp = sp;
+                        th.tssa.gp = gp;
+                        th.tssa.tp = tp;
+                        th.tssa.t = regs.t;
+                        th.tssa.s = regs.s;
+                        th.tssa.a = regs.a;
+                        th.tssa.pc = next_pc;
+
+                        read_csrs(
+                            &mut th.tssa.sstatus,
+                            &mut th.tssa.stvec,
+                            &mut th.tssa.sip,
+                            &mut th.tssa.sie,
+                            &mut th.tssa.scounteren,
+                            &mut th.tssa.sscratch,
+                            &mut th.tssa.satp,
+                        );
+                    }
+
+                    // 2. Switch mmpt to Host (SDID=0), mfence_pa(0, 0), SIDN=0
+                    let r_ctx = rdsm_context();
+                    let mpt_mode = r_ctx.mpt_mode.unwrap_or(rdsm::csr::MptMode::Bare);
+                    let host_root_ppn = r_ctx.host_root_ppn;
+
+                    #[cfg(target_arch = "riscv64")]
+                    {
+                        let mmpt = rdsm::csr::Mmpt::from_parts(mpt_mode, 0, host_root_ppn);
+                        mmpt.write();
+                        rdsm::fence::mfence_pa(0, 0);
+                        rdsm::interrupt::switch_interrupt_domain(0);
+                    }
+
+                    // 3. Restore Host S-mode CSRs and GPRs
+                    let th = thcs();
+                    unsafe {
+                        write_csrs(
+                            th.hssa.sstatus,
+                            th.hssa.stvec,
+                            th.hssa.sip,
+                            th.hssa.sie,
+                            th.hssa.scounteren,
+                            th.hssa.sscratch,
+                            th.hssa.satp,
+                        );
+                    }
+
+                    let host_pc = th.hssa.pc;
+                    let host_sp = th.hssa.sp;
+                    let host_gp = th.hssa.gp;
+                    let host_tp = th.hssa.tp;
+
+                    regs.ra = th.hssa.ra;
+                    regs.t = th.hssa.t;
+                    regs.s = th.hssa.s;
+
+                    // Write TSM returned error (a1) and value (a2) to Host a0 and a1
+                    regs.a[0] = tsm_err;
+                    regs.a[1] = tsm_val;
+                    regs.a[2] = th.hssa.a[2];
+                    regs.a[3] = th.hssa.a[3];
+                    regs.a[4] = th.hssa.a[4];
+                    regs.a[5] = th.hssa.a[5];
+                    regs.a[6] = th.hssa.a[6];
+                    regs.a[7] = th.hssa.a[7];
+
+                    regs.gp = host_gp;
+                    regs.tp = host_tp;
+                    regs.sp = host_sp;
+                    regs.pc = host_pc;
+
+                    crate::sbi::trap::helper::write_gp(host_gp);
+                    crate::sbi::trap::helper::write_tp(host_tp);
+                    unsafe {
+                        riscv::register::mscratch::write(host_sp);
+                        riscv::register::mepc::write(host_pc);
+                        riscv::register::mstatus::set_mpp(
+                            riscv::register::mstatus::MPP::Supervisor,
+                        );
+                        riscv::register::mstatus::set_mpie();
+                    }
+
+                    ctx.restore()
+                }
+                _ => {
+                    error!("RDSM: Unsupported TEERET reason: {}", reason);
+                    regs.a[0] = (-1isize) as usize; // SBI_ERR_NOT_SUPPORTED
+                    regs.a[1] = 0;
+                    let epc = riscv::register::mepc::read();
+                    unsafe {
+                        riscv::register::mepc::write(
+                            epc + crate::sbi::trap::helper::get_inst(epc).1,
+                        );
+                    }
+                    ctx.restore()
+                }
+            }
+        }
+        _ => {
+            regs.a[0] = (-1isize) as usize; // SBI_ERR_NOT_SUPPORTED
+            regs.a[1] = 0;
+            let epc = riscv::register::mepc::read();
+            unsafe {
+                riscv::register::mepc::write(epc + crate::sbi::trap::helper::get_inst(epc).1);
+            }
+            ctx.restore()
+        }
+    }
 }

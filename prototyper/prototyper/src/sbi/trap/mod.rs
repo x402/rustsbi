@@ -1,7 +1,6 @@
 pub mod boot;
 pub mod handler;
-
-mod helper;
+pub mod helper;
 
 use super::pmu::pmu_firmware_counter_increment;
 use crate::fail::unsupported_trap;
