@@ -66,7 +66,8 @@ pub const EID_COVI: usize = 0x434F5649;
 // ── THCS (Thread/Hart Context Structure) & DomainContext ────────────────
 
 /// Context of a supervisor domain (Host or TSM/Confidential).
-/// Contains general-purpose registers and S-mode CSRs.
+/// Contains general-purpose registers, S-mode CSRs, HS-mode (hypervisor)
+/// CSRs, and VS-mode CSRs.
 #[repr(C)]
 #[derive(Clone, Copy, Debug)]
 pub struct DomainContext {
@@ -88,6 +89,26 @@ pub struct DomainContext {
     pub scounteren: usize,
     pub sscratch: usize,
     pub satp: usize,
+
+    // HS-mode (hypervisor) CSRs
+    pub hstatus: usize,
+    pub hgatp: usize,
+    pub hedeleg: usize,
+    pub hideleg: usize,
+    pub hvip: usize,
+    pub henvcfg: usize,
+    pub hcounteren: usize,
+
+    // VS-mode CSRs
+    pub vsstatus: usize,
+    pub vsie: usize,
+    pub vstvec: usize,
+    pub vsscratch: usize,
+    pub vsepc: usize,
+    pub vscause: usize,
+    pub vstval: usize,
+    pub vsip: usize,
+    pub vsatp: usize,
 }
 
 impl DomainContext {
@@ -108,6 +129,22 @@ impl DomainContext {
             scounteren: 0,
             sscratch: 0,
             satp: 0,
+            hstatus: 0,
+            hgatp: 0,
+            hedeleg: 0,
+            hideleg: 0,
+            hvip: 0,
+            henvcfg: 0,
+            hcounteren: 0,
+            vsstatus: 0,
+            vsie: 0,
+            vstvec: 0,
+            vsscratch: 0,
+            vsepc: 0,
+            vscause: 0,
+            vstval: 0,
+            vsip: 0,
+            vsatp: 0,
         }
     }
 }
@@ -152,18 +189,12 @@ pub fn is_tsm_ready() -> bool {
     unsafe { THCS.tsm_ready }
 }
 
+/// Save all S-mode, HS-mode and VS-mode CSRs of the current domain into `ctx`.
 #[inline(always)]
-unsafe fn read_csrs(
-    sstatus: &mut usize,
-    stvec: &mut usize,
-    sip: &mut usize,
-    sie: &mut usize,
-    scounteren: &mut usize,
-    sscratch: &mut usize,
-    satp: &mut usize,
-) {
+unsafe fn read_csrs(ctx: &mut DomainContext) {
     #[cfg(target_arch = "riscv64")]
     unsafe {
+        // S-mode CSRs
         core::arch::asm!(
             "csrr {sstatus}, sstatus",
             "csrr {stvec}, stvec",
@@ -172,30 +203,64 @@ unsafe fn read_csrs(
             "csrr {scounteren}, scounteren",
             "csrr {sscratch}, sscratch",
             "csrr {satp}, satp",
-            sstatus = out(reg) * sstatus,
-            stvec = out(reg) * stvec,
-            sip = out(reg) * sip,
-            sie = out(reg) * sie,
-            scounteren = out(reg) * scounteren,
-            sscratch = out(reg) * sscratch,
-            satp = out(reg) * satp,
+            sstatus = out(reg) ctx.sstatus,
+            stvec = out(reg) ctx.stvec,
+            sip = out(reg) ctx.sip,
+            sie = out(reg) ctx.sie,
+            scounteren = out(reg) ctx.scounteren,
+            sscratch = out(reg) ctx.sscratch,
+            satp = out(reg) ctx.satp,
+            options(nomem)
+        );
+        // HS-mode CSRs
+        core::arch::asm!(
+            "csrr {hstatus}, 0x600",
+            "csrr {hgatp}, 0x680",
+            "csrr {hedeleg}, 0x602",
+            "csrr {hideleg}, 0x603",
+            "csrr {hvip}, 0x645",
+            "csrr {henvcfg}, 0x60a",
+            "csrr {hcounteren}, 0x606",
+            hstatus = out(reg) ctx.hstatus,
+            hgatp = out(reg) ctx.hgatp,
+            hedeleg = out(reg) ctx.hedeleg,
+            hideleg = out(reg) ctx.hideleg,
+            hvip = out(reg) ctx.hvip,
+            henvcfg = out(reg) ctx.henvcfg,
+            hcounteren = out(reg) ctx.hcounteren,
+            options(nomem)
+        );
+        // VS-mode CSRs
+        core::arch::asm!(
+            "csrr {vsstatus}, 0x200",
+            "csrr {vsie}, 0x204",
+            "csrr {vstvec}, 0x205",
+            "csrr {vsscratch}, 0x240",
+            "csrr {vsepc}, 0x241",
+            "csrr {vscause}, 0x242",
+            "csrr {vstval}, 0x243",
+            "csrr {vsip}, 0x244",
+            "csrr {vsatp}, 0x280",
+            vsstatus = out(reg) ctx.vsstatus,
+            vsie = out(reg) ctx.vsie,
+            vstvec = out(reg) ctx.vstvec,
+            vsscratch = out(reg) ctx.vsscratch,
+            vsepc = out(reg) ctx.vsepc,
+            vscause = out(reg) ctx.vscause,
+            vstval = out(reg) ctx.vstval,
+            vsip = out(reg) ctx.vsip,
+            vsatp = out(reg) ctx.vsatp,
             options(nomem)
         );
     }
 }
 
+/// Restore all S-mode, HS-mode and VS-mode CSRs of a domain from `ctx`.
 #[inline(always)]
-unsafe fn write_csrs(
-    sstatus: usize,
-    stvec: usize,
-    sip: usize,
-    sie: usize,
-    scounteren: usize,
-    sscratch: usize,
-    satp: usize,
-) {
+unsafe fn write_csrs(ctx: &DomainContext) {
     #[cfg(target_arch = "riscv64")]
     unsafe {
+        // S-mode CSRs
         core::arch::asm!(
             "csrw sstatus, {sstatus}",
             "csrw stvec, {stvec}",
@@ -204,13 +269,53 @@ unsafe fn write_csrs(
             "csrw scounteren, {scounteren}",
             "csrw sscratch, {sscratch}",
             "csrw satp, {satp}",
-            sstatus = in(reg) sstatus,
-            stvec = in(reg) stvec,
-            sip = in(reg) sip,
-            sie = in(reg) sie,
-            scounteren = in(reg) scounteren,
-            sscratch = in(reg) sscratch,
-            satp = in(reg) satp,
+            sstatus = in(reg) ctx.sstatus,
+            stvec = in(reg) ctx.stvec,
+            sip = in(reg) ctx.sip,
+            sie = in(reg) ctx.sie,
+            scounteren = in(reg) ctx.scounteren,
+            sscratch = in(reg) ctx.sscratch,
+            satp = in(reg) ctx.satp,
+            options(nomem)
+        );
+        // HS-mode CSRs
+        core::arch::asm!(
+            "csrw 0x600, {hstatus}",
+            "csrw 0x680, {hgatp}",
+            "csrw 0x602, {hedeleg}",
+            "csrw 0x603, {hideleg}",
+            "csrw 0x645, {hvip}",
+            "csrw 0x60a, {henvcfg}",
+            "csrw 0x606, {hcounteren}",
+            hstatus = in(reg) ctx.hstatus,
+            hgatp = in(reg) ctx.hgatp,
+            hedeleg = in(reg) ctx.hedeleg,
+            hideleg = in(reg) ctx.hideleg,
+            hvip = in(reg) ctx.hvip,
+            henvcfg = in(reg) ctx.henvcfg,
+            hcounteren = in(reg) ctx.hcounteren,
+            options(nomem)
+        );
+        // VS-mode CSRs
+        core::arch::asm!(
+            "csrw 0x200, {vsstatus}",
+            "csrw 0x204, {vsie}",
+            "csrw 0x205, {vstvec}",
+            "csrw 0x240, {vsscratch}",
+            "csrw 0x241, {vsepc}",
+            "csrw 0x242, {vscause}",
+            "csrw 0x243, {vstval}",
+            "csrw 0x244, {vsip}",
+            "csrw 0x280, {vsatp}",
+            vsstatus = in(reg) ctx.vsstatus,
+            vsie = in(reg) ctx.vsie,
+            vstvec = in(reg) ctx.vstvec,
+            vsscratch = in(reg) ctx.vsscratch,
+            vsepc = in(reg) ctx.vsepc,
+            vscause = in(reg) ctx.vscause,
+            vstval = in(reg) ctx.vstval,
+            vsip = in(reg) ctx.vsip,
+            vsatp = in(reg) ctx.vsatp,
             options(nomem)
         );
     }
@@ -852,15 +957,7 @@ pub extern "C" fn handle_teecall_entire(ctx: fast_trap::EntireContext) -> fast_t
         th.hssa.a = host_a;
         th.hssa.pc = next_pc;
 
-        read_csrs(
-            &mut th.hssa.sstatus,
-            &mut th.hssa.stvec,
-            &mut th.hssa.sip,
-            &mut th.hssa.sie,
-            &mut th.hssa.scounteren,
-            &mut th.hssa.sscratch,
-            &mut th.hssa.satp,
-        );
+        read_csrs(&mut th.hssa);
     }
 
     // 2. Switch mmpt to SDID=1 (Confidential domain MPT_CONF_ROOT), mfence_pa(0, 0), SIDN=1
@@ -876,19 +973,9 @@ pub extern "C" fn handle_teecall_entire(ctx: fast_trap::EntireContext) -> fast_t
         rdsm::interrupt::switch_interrupt_domain(1);
     }
 
-    // 3. Restore TSM S-mode CSRs & context
+    // 3. Restore TSM S-mode/HS-mode/VS-mode CSRs & context
     let th = thcs();
-    unsafe {
-        write_csrs(
-            th.tssa.sstatus,
-            th.tssa.stvec,
-            th.tssa.sip,
-            th.tssa.sie,
-            th.tssa.scounteren,
-            th.tssa.sscratch,
-            th.tssa.satp,
-        );
-    }
+    unsafe { write_csrs(&th.tssa) };
 
     let tsm_pc = th.tssa.pc;
     let tsm_sp = th.tssa.sp;
@@ -1035,20 +1122,11 @@ pub extern "C" fn handle_rdsm_entire(ctx: fast_trap::EntireContext) -> fast_trap
                         th.tssa.s = regs.s;
                         th.tssa.a = regs.a;
 
-                        read_csrs(
-                            &mut th.tssa.sstatus,
-                            &mut th.tssa.stvec,
-                            &mut th.tssa.sip,
-                            &mut th.tssa.sie,
-                            &mut th.tssa.scounteren,
-                            &mut th.tssa.sscratch,
-                            &mut th.tssa.satp,
-                        );
+                        read_csrs(&mut th.tssa);
 
                         th.tsm_ready = true;
                     }
 
-                    println!("[RDSM] Switching to Host Domain (SDID=0)...");
                     info!("[RDSM] Switching to Host Domain (SDID=0)...");
 
                     let mpt_mode = r_ctx.mpt_mode.unwrap_or(rdsm::csr::MptMode::Bare);
@@ -1111,15 +1189,7 @@ pub extern "C" fn handle_rdsm_entire(ctx: fast_trap::EntireContext) -> fast_trap
                         th.tssa.a = regs.a;
                         th.tssa.pc = next_pc;
 
-                        read_csrs(
-                            &mut th.tssa.sstatus,
-                            &mut th.tssa.stvec,
-                            &mut th.tssa.sip,
-                            &mut th.tssa.sie,
-                            &mut th.tssa.scounteren,
-                            &mut th.tssa.sscratch,
-                            &mut th.tssa.satp,
-                        );
+                        read_csrs(&mut th.tssa);
                     }
 
                     // 2. Switch mmpt to Host (SDID=0), mfence_pa(0, 0), SIDN=0
@@ -1135,19 +1205,9 @@ pub extern "C" fn handle_rdsm_entire(ctx: fast_trap::EntireContext) -> fast_trap
                         rdsm::interrupt::switch_interrupt_domain(0);
                     }
 
-                    // 3. Restore Host S-mode CSRs and GPRs
+                    // 3. Restore Host S-mode/HS-mode/VS-mode CSRs and GPRs
                     let th = thcs();
-                    unsafe {
-                        write_csrs(
-                            th.hssa.sstatus,
-                            th.hssa.stvec,
-                            th.hssa.sip,
-                            th.hssa.sie,
-                            th.hssa.scounteren,
-                            th.hssa.sscratch,
-                            th.hssa.satp,
-                        );
-                    }
+                    unsafe { write_csrs(&th.hssa) };
 
                     let host_pc = th.hssa.pc;
                     let host_sp = th.hssa.sp;
