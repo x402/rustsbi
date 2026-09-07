@@ -1,6 +1,6 @@
 # AGENTS.md
 
-High-signal guidance for OpenCode agents working in the RustSBI repository.
+High-signal guidance for AI coding agents (ZCode; OpenCode/Codex delegation was retired on 2026-09-07 — see the top-level `/home/x402/smmtt/AGENTS.md` §3.0) working in the RustSBI repository.
 Verify against the executable sources (`.cargo/config.toml`, `xtask/`, `.github/workflows/`) if anything here looks stale.
 
 ## Specifications
