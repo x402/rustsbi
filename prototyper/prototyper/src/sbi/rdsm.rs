@@ -89,6 +89,8 @@ pub struct DomainContext {
     pub scounteren: usize,
     pub sscratch: usize,
     pub satp: usize,
+    pub senvcfg: usize,
+    pub scontext: usize,
 
     // HS-mode (hypervisor) CSRs
     pub hstatus: usize,
@@ -129,6 +131,8 @@ impl DomainContext {
             scounteren: 0,
             sscratch: 0,
             satp: 0,
+            senvcfg: 0,
+            scontext: 0,
             hstatus: 0,
             hgatp: 0,
             hedeleg: 0,
@@ -203,6 +207,8 @@ unsafe fn read_csrs(ctx: &mut DomainContext) {
             "csrr {scounteren}, scounteren",
             "csrr {sscratch}, sscratch",
             "csrr {satp}, satp",
+            "csrr {senvcfg}, 0x10a",
+            "csrr {scontext}, 0x5a8",
             sstatus = out(reg) ctx.sstatus,
             stvec = out(reg) ctx.stvec,
             sip = out(reg) ctx.sip,
@@ -210,6 +216,8 @@ unsafe fn read_csrs(ctx: &mut DomainContext) {
             scounteren = out(reg) ctx.scounteren,
             sscratch = out(reg) ctx.sscratch,
             satp = out(reg) ctx.satp,
+            senvcfg = out(reg) ctx.senvcfg,
+            scontext = out(reg) ctx.scontext,
             options(nomem)
         );
         // HS-mode CSRs
@@ -269,6 +277,8 @@ unsafe fn write_csrs(ctx: &DomainContext) {
             "csrw scounteren, {scounteren}",
             "csrw sscratch, {sscratch}",
             "csrw satp, {satp}",
+            "csrw 0x10a, {senvcfg}",
+            "csrw 0x5a8, {scontext}",
             sstatus = in(reg) ctx.sstatus,
             stvec = in(reg) ctx.stvec,
             sip = in(reg) ctx.sip,
@@ -276,6 +286,8 @@ unsafe fn write_csrs(ctx: &DomainContext) {
             scounteren = in(reg) ctx.scounteren,
             sscratch = in(reg) ctx.sscratch,
             satp = in(reg) ctx.satp,
+            senvcfg = in(reg) ctx.senvcfg,
+            scontext = in(reg) ctx.scontext,
             options(nomem)
         );
         // HS-mode CSRs
@@ -436,6 +448,29 @@ pub fn check_and_load_cove_payload() -> bool {
             "RDSM: Found CoVE payload magic but unsupported version {}",
             header.version
         );
+        return false;
+    }
+
+    // Reject load regions that fall outside the platform memory range or
+    // overflow: a malformed payload must not be able to place binaries
+    // over MMIO, firmware memory or beyond physical RAM.
+    let mem_range = unsafe { crate::platform::PLATFORM.info.memory_range.as_ref() };
+    let (ram_lo, ram_hi) = match mem_range {
+        Some(r) => (r.start, r.end),
+        None => return false,
+    };
+    let region_ok = |start: u64, size: u64| -> bool {
+        let s = start as usize;
+        let e = match s.checked_add(size as usize) {
+            Some(e) => e,
+            None => return false,
+        };
+        s >= ram_lo && e <= ram_hi
+    };
+    if !region_ok(header.tsm_load_paddr, header.tsm_size)
+        || !region_ok(header.host_load_paddr, header.host_size)
+    {
+        warn!("RDSM: CoVE payload load region outside platform memory");
         return false;
     }
 
@@ -1047,7 +1082,7 @@ pub extern "C" fn handle_rdsm_entire(ctx: fast_trap::EntireContext) -> fast_trap
             let mode = match r_ctx.mpt_mode {
                 Some(m) => m,
                 None => {
-                    regs.a[0] = (-2isize) as usize; // SBI_ERR_FAILED
+                    regs.a[0] = (-1isize) as usize; // SBI_ERR_FAILED
                     regs.a[1] = 0;
                     let epc = riscv::register::mepc::read();
                     unsafe {

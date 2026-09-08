@@ -228,7 +228,7 @@ pub fn sbi_call_handler(
     // 3. Handle COVH (0x434F5648) and COVI (0x434F5649) forward to TSM (TEECALL)
     if a7 == crate::sbi::rdsm::EID_COVH || a7 == crate::sbi::rdsm::EID_COVI {
         if !crate::sbi::rdsm::is_tsm_ready() {
-            ctx.regs().a[0] = (-2isize) as usize; // SBI_ERR_FAILED
+            ctx.regs().a[0] = (-1isize) as usize; // SBI_ERR_FAILED
             ctx.regs().a[1] = 0;
             let epc = mepc::read();
             unsafe {
