@@ -333,6 +333,30 @@ unsafe fn write_csrs(ctx: &DomainContext) {
     }
 }
 
+// ── Platform reserved-region layout (RDSM_GET_INFO) ────────────────────
+
+/// Platform memory layout handed to the TSM through `RDSM_GET_INFO`
+/// (a2 = confidential-domain buffer).
+///
+/// The host-allocatable whitelist derivable from this structure is:
+/// `[tsm_region_end, mpt_pool_start)` ∪ `[mpt_pool_end, ram_end)` —
+/// everything else (firmware gap, TSM image, MPT page pool) is reserved.
+///
+/// Must stay layout-compatible with the TSM-side copy in
+/// `tsm/tsm/src/rdsm.rs`.
+#[repr(C)]
+#[derive(Clone, Copy, Debug)]
+pub struct RdsmPlatformInfo {
+    pub ram_start: usize,
+    pub ram_end: usize,
+    /// `[tsm_region_start, tsm_region_end)` = the TSM image region.
+    /// `[ram_start, tsm_region_start)` is firmware / reserved gap.
+    pub tsm_region_start: usize,
+    pub tsm_region_end: usize,
+    pub mpt_pool_start: usize,
+    pub mpt_pool_end: usize,
+}
+
 // ── Global RDSM context ────────────────────────────────────────────────
 
 /// Global RDSM context recording dual-MPT state, payload header info, and FDT address.
@@ -1044,13 +1068,52 @@ pub extern "C" fn handle_rdsm_entire(ctx: fast_trap::EntireContext) -> fast_trap
     let (mut ctx, _) = ctx.split();
     let regs = ctx.regs();
 
+    // Sender validation: the private RDSM extension is only callable from
+    // the confidential domain. A host-domain ecall must never be able to
+    // program MPT entries or drive the TEERET machinery directly.
+    #[cfg(target_arch = "riscv64")]
+    {
+        let caller_sdid = rdsm::csr::Mmpt::read().sdid();
+        if caller_sdid != rdsm_context().conf_sdid {
+            regs.a[0] = (-8isize) as usize; // SBI_ERR_DENIED
+            regs.a[1] = 0;
+            let epc = riscv::register::mepc::read();
+            unsafe {
+                riscv::register::mepc::write(epc + crate::sbi::trap::helper::get_inst(epc).1);
+            }
+            return ctx.restore();
+        }
+    }
+
     let fid = regs.a[6];
     match fid {
         FID_RDSM_GET_INFO => {
             let r_ctx = rdsm_context();
             let mode_val = r_ctx.mpt_mode.map_or(0, |m| m as usize);
+            // a2 (optional): confidential-domain buffer receiving the
+            // platform reserved-region layout used for input validation.
+            let info_buf = regs.a[2];
             regs.a[0] = 0; // SBI_SUCCESS
             regs.a[1] = mode_val;
+            if info_buf != 0 {
+                let (ram_start, ram_end) = match unsafe {
+                    crate::platform::PLATFORM.info.memory_range.as_ref()
+                } {
+                    Some(r) => (r.start, r.end),
+                    None => (0, 0),
+                };
+                let info = RdsmPlatformInfo {
+                    ram_start,
+                    ram_end,
+                    tsm_region_start: r_ctx.tsm_load_paddr,
+                    tsm_region_end: r_ctx.host_load_paddr,
+                    mpt_pool_start: MPT_PAGE_POOL_PADDR,
+                    mpt_pool_end: MPT_PAGE_POOL_PADDR + MPT_PAGE_POOL_SIZE,
+                };
+                unsafe {
+                    core::ptr::write_volatile(info_buf as *mut RdsmPlatformInfo, info);
+                }
+            }
             let epc = riscv::register::mepc::read();
             unsafe {
                 riscv::register::mepc::write(epc + crate::sbi::trap::helper::get_inst(epc).1);
@@ -1107,6 +1170,39 @@ pub extern "C" fn handle_rdsm_entire(ctx: fast_trap::EntireContext) -> fast_trap
                 }
                 return ctx.restore();
             };
+
+            // Alignment + reserved-region validation (plan 4.4):
+            // - paddr / len must be 4 KiB aligned, len nonzero, range in RAM
+            // - host-domain updates must stay inside host-allocatable memory
+            //   ([host_load, mpt_pool) ∪ [mpt_pool_end, ram_end))
+            // - conf-domain updates must not cover the firmware gap
+            //   ([ram_start, tsm_load)) or the MPT page pool
+            let range_ok = {
+                let end = paddr.checked_add(len);
+                let (ram_start, ram_end) = unsafe { crate::platform::PLATFORM.info.memory_range.as_ref() }
+                    .map_or((0, 0), |r| (r.start, r.end));
+                match end {
+                    Some(e) if e <= ram_end && paddr >= ram_start => {
+                        let overlaps_pool = !(e <= MPT_PAGE_POOL_PADDR
+                            || paddr >= MPT_PAGE_POOL_PADDR + MPT_PAGE_POOL_SIZE);
+                        if target_sdid == r_ctx.host_sdid {
+                            paddr >= r_ctx.host_load_paddr && !overlaps_pool
+                        } else {
+                            paddr >= r_ctx.tsm_load_paddr && !overlaps_pool
+                        }
+                    }
+                    _ => false,
+                }
+            };
+            if paddr % 4096 != 0 || len % 4096 != 0 || len == 0 || !range_ok {
+                regs.a[0] = (-3isize) as usize; // SBI_ERR_INVALID_PARAM
+                regs.a[1] = 0;
+                let epc = riscv::register::mepc::read();
+                unsafe {
+                    riscv::register::mepc::write(epc + crate::sbi::trap::helper::get_inst(epc).1);
+                }
+                return ctx.restore();
+            }
 
             let mut tree = rdsm::mpt::MptTree::from_root(mode, root_ppn);
             let mut alloc = MptBumpAlloc::from_pool();

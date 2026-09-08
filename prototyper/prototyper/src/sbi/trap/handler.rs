@@ -227,6 +227,21 @@ pub fn sbi_call_handler(
 
     // 3. Handle COVH (0x434F5648) and COVI (0x434F5649) forward to TSM (TEECALL)
     if a7 == crate::sbi::rdsm::EID_COVH || a7 == crate::sbi::rdsm::EID_COVI {
+        // COVH/COVI are host-domain extensions: only forward ecalls that
+        // arrived from the host supervisor domain to the TSM.
+        #[cfg(target_arch = "riscv64")]
+        {
+            let caller_sdid = rdsm::csr::Mmpt::read().sdid();
+            if caller_sdid != crate::sbi::rdsm::rdsm_context().host_sdid {
+                ctx.regs().a[0] = (-8isize) as usize; // SBI_ERR_DENIED
+                ctx.regs().a[1] = 0;
+                let epc = mepc::read();
+                unsafe {
+                    mepc::write(epc + get_inst(epc).1);
+                }
+                return ctx.restore();
+            }
+        }
         if !crate::sbi::rdsm::is_tsm_ready() {
             ctx.regs().a[0] = (-1isize) as usize; // SBI_ERR_FAILED
             ctx.regs().a[1] = 0;
