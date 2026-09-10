@@ -52,14 +52,13 @@ pub extern "C" fn fast_handler(
         return handler::sbi_call_handler(ctx, a1, a2, a3, a4, a5, a6, a7);
     }
 
-    // Save registers for other traps
-    let save_regs = |ctx: &mut FastContext| {
-        ctx.regs().a = [ctx.a0(), a1, a2, a3, a4, a5, a6, a7];
-    };
+    // Flatten-save argument registers for non-SBI traps before dispatching
+    let a0 = ctx.a0();
+    ctx.regs().a = [a0, a1, a2, a3, a4, a5, a6, a7];
 
     match cause {
-        Trap::Interrupt(interrupt) => handle_interrupt(ctx, interrupt, save_regs),
-        Trap::Exception(exception) => handle_exception(ctx, exception, save_regs),
+        Trap::Interrupt(interrupt) => handle_interrupt(ctx, interrupt),
+        Trap::Exception(exception) => handle_exception(ctx, exception),
     }
 }
 
@@ -77,11 +76,9 @@ fn save_regs_and_handle_msdei(ctx: &mut FastContext, regs: &[usize; 8]) {
 fn handle_interrupt(
     mut ctx: FastContext,
     interrupt: Interrupt,
-    save_regs: impl Fn(&mut FastContext),
 ) -> FastResult {
     match interrupt {
         Interrupt::MachineSoft => {
-            save_regs(&mut ctx);
             handler::msoft_handler(ctx)
         }
         Interrupt::MachineTimer => {
@@ -98,11 +95,9 @@ fn handle_interrupt(
                     mip::set_stimer();
                 }
             }
-            save_regs(&mut ctx);
             ctx.restore()
         }
         Interrupt::MachineExternal => {
-            save_regs(&mut ctx);
             handler::mext_handler(ctx)
         }
         _ => {
@@ -115,7 +110,6 @@ fn handle_interrupt(
 fn handle_exception(
     mut ctx: FastContext,
     exception: Exception,
-    save_regs: impl Fn(&mut FastContext),
 ) -> FastResult {
     match exception {
         // TODO: Handle InstructionMisaligned
@@ -177,7 +171,6 @@ fn handle_exception(
             if mstatus::read().mpp() == mstatus::MPP::Machine {
                 panic!("Cannot handle illegal instruction exception from M-MODE");
             }
-            save_regs(&mut ctx);
             ctx.continue_with(handler::illegal_instruction_handler, ())
         }
         // TODO: Handle Breakpoint
@@ -187,12 +180,10 @@ fn handle_exception(
         }
         Exception::LoadMisaligned => {
             pmu_firmware_counter_increment(firmware_event::MISALIGNED_LOAD);
-            save_regs(&mut ctx);
             ctx.continue_with(handler::load_misaligned_handler, ())
         }
         Exception::StoreMisaligned => {
             pmu_firmware_counter_increment(firmware_event::MISALIGNED_STORE);
-            save_regs(&mut ctx);
             ctx.continue_with(handler::store_misaligned_handler, ())
         }
         _ => {
