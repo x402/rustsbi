@@ -170,12 +170,18 @@ pub fn rdsm_init() {}
 #[cfg(not(feature = "rdsm"))]
 pub fn set_fdt_address(_fdt: usize) {}
 
+/// Only called under the `rdsm` feature (payload.rs); kept so both
+/// configurations expose the same call surface.
 #[cfg(not(feature = "rdsm"))]
+#[allow(dead_code)]
 pub fn is_cove_payload() -> bool {
     false
 }
 
+/// Only called under the `rdsm` feature (payload.rs); kept so both
+/// configurations expose the same call surface.
 #[cfg(not(feature = "rdsm"))]
+#[allow(dead_code)]
 pub fn get_tsm_entry() -> usize {
     0
 }

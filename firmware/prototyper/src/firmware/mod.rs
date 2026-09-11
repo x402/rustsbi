@@ -17,7 +17,9 @@ cfg_if::cfg_if! {
     } else {
         pub mod dynamic;
         use dynamic::{decode_next_stage, read_dynamic_info};
-        // No embedded payload image in this boot mode.
+        // No embedded payload image in this boot mode; only the `rdsm`
+        // feature ever reads the image address (CoVE header location).
+        #[allow(dead_code)]
         #[inline]
         pub fn image_address() -> usize {
             0

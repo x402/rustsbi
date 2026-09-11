@@ -14,6 +14,7 @@ pub(crate) fn decode_next_stage(_dynamic_info_address: usize) -> (mstatus::MPP, 
 
 /// Address of the embedded payload image (the RDSM payload parser reads
 /// its CoVE header from here).
+#[cfg_attr(not(feature = "rdsm"), allow(dead_code))]
 #[inline]
 pub fn image_address() -> usize {
     payload_address()

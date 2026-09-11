@@ -235,7 +235,7 @@ pub fn sbi_call_handler(
             ctx.regs().a[0] = 0;
             ctx.regs().a[1] = 0b11;
         } else {
-            ctx.regs().a[0] = (-1isize) as usize; // SBI_ERR_NOT_SUPPORTED
+            ctx.regs().a[0] = (-1isize) as usize; // private error code; non-zero only (SBI NOT_SUPPORTED is -2)
             ctx.regs().a[1] = 0;
         }
         let epc = mepc::read();
@@ -252,7 +252,7 @@ pub fn sbi_call_handler(
         {
             let caller_sdid = crate::sbi::rdsm::csr::Mmpt::read().sdid();
             if caller_sdid != crate::sbi::rdsm::rdsm_context().host_sdid {
-                ctx.regs().a[0] = (-8isize) as usize; // SBI_ERR_DENIED
+                ctx.regs().a[0] = (-8isize) as usize; // private error code; non-zero only (SBI DENIED is -4)
                 ctx.regs().a[1] = 0;
                 let epc = mepc::read();
                 unsafe {
