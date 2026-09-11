@@ -40,6 +40,9 @@ test = false
 bench = false
 
 [features]
+# Declared for upstream parity; this project never enables it — NEMU
+# integration goes through the `rdsm` feature instead.
+nemu = []
 payload = []
 jump = []
 fdt = []
