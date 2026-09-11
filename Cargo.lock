@@ -525,6 +525,7 @@ dependencies = [
  "rdsm",
  "rdsm-abi",
  "riscv",
+ "riscv-cove",
 ]
 
 [[package]]
