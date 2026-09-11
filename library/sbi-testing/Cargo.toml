@@ -7,6 +7,7 @@ keywords = ["riscv", "sbi", "rustsbi"]
 authors = ["YdrMaster <ydrml@hotmail.com>"]
 documentation = "https://docs.rs/sbi-testing"
 edition.workspace = true
+rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
 readme = "README.md"
@@ -19,7 +20,7 @@ targets = ["riscv32imac-unknown-none-elf", "riscv64imac-unknown-none-elf"]
 
 [dependencies]
 sbi-rt = { version = "0.0.4", path = "../sbi-rt" }
-sbi-spec = { version = "0.0.9", path = "../sbi-spec" }
+sbi-spec = { version = "0.0.10", path = "../sbi-spec" }
 riscv = { workspace = true }
 log = { version = "0.4", package = "log", optional = true }
 

@@ -5,6 +5,11 @@ mode=${1:?missing mode}
 kernel=${2:?missing kernel}
 log_dir=${3:-qemu-logs}
 
+# Single source for the verification patterns, shared with xtask
+# (`Kernel::expected_patterns` / `kernels::forbidden_patterns`).
+expected_file="firmware/${kernel}-kernel/scripts/expected.txt"
+forbidden_file="firmware/scripts/qemu-forbidden.txt"
+
 mkdir -p "$log_dir"
 
 case "$kernel" in
@@ -13,14 +18,12 @@ case "$kernel" in
     attempts=${QEMU_BOOT_TEST_RETRIES:-2}
     timeout_secs=${QEMU_BOOT_TEST_TIMEOUT_SECS:-60}
     payload_bin="target/riscv64imac-unknown-none-elf/release/rustsbi-test-kernel.bin"
-    payload_elf="target/riscv64gc-unknown-none-elf/release/rustsbi-prototyper-payload-test.elf"
     ;;
   bench)
     smp=4
     attempts=${QEMU_BOOT_BENCH_RETRIES:-4}
     timeout_secs=${QEMU_BOOT_BENCH_TIMEOUT_SECS:-90}
     payload_bin="target/riscv64imac-unknown-none-elf/release/rustsbi-bench-kernel.bin"
-    payload_elf="target/riscv64gc-unknown-none-elf/release/rustsbi-prototyper-payload-bench.elf"
     ;;
   *)
     echo "unknown kernel: $kernel" >&2
@@ -28,11 +31,9 @@ case "$kernel" in
     ;;
 esac
 
+# Payload-mode boots are verified by `cargo prototyper test` / `bench`
+# themselves; this script covers the dynamic and jump firmware modes.
 case "$mode" in
-  payload)
-    bios="$payload_elf"
-    extra_args=()
-    ;;
   dynamic)
     bios="target/riscv64gc-unknown-none-elf/release/rustsbi-prototyper-dynamic.elf"
     extra_args=(-kernel "$payload_bin")
@@ -65,32 +66,59 @@ run_once() {
   set -e
 
   echo "[$mode/$kernel] attempt $attempt/$attempts qemu exit: $qemu_exit (timeout=${timeout_secs}s)"
-  test "$qemu_exit" = "0"
-  test -s "$log_file"
+  test "$qemu_exit" = "0" || return 1
+  test -s "$log_file" || return 1
 
-  grep -F 'Hello RustSBI!' "$log_file"
-  grep -F "Platform HART Count           : $smp" "$log_file"
+  # Fail closed: a missing or empty pattern file must not silently
+  # disable console verification (the process-substitution loops below
+  # would otherwise run zero iterations and still succeed).
+  test -s "$expected_file" || {
+    echo "[$mode/$kernel] missing or empty pattern file: $expected_file" >&2
+    return 1
+  }
+  test -s "$forbidden_file" || {
+    echo "[$mode/$kernel] missing or empty pattern file: $forbidden_file" >&2
+    return 1
+  }
 
-  case "$kernel" in
-    test)
-      grep -F 'Sbi `Base` test pass' "$log_file"
-      grep -F 'Sbi `TIME` test pass' "$log_file"
-      grep -F 'Sbi `sPI` test pass' "$log_file"
-      grep -F 'Sbi `DBCN` test pass' "$log_file"
-      grep -F 'DBCN rejected non-zero upper-half write' "$log_file"
-      grep -F 'DBCN rejected non-zero upper-half read' "$log_file"
-      grep -F '[pmu] counters number:' "$log_file"
-      ;;
-    bench)
-      grep -F 'Starting test' "$log_file"
-      grep -F 'Test #0:' "$log_file"
-      grep -F 'Test #1:' "$log_file"
-      grep -F 'Test #2:' "$log_file"
-      grep -F 'Test #3:' "$log_file"
-      ;;
-  esac
+  # Patterns are read with the same semantics as the xtask side
+  # (`read_console_patterns`): trimmed lines, `#` comments skipped, and
+  # a missing trailing newline still yields the last line.
+  while IFS= read -r pattern || [ -n "$pattern" ]; do
+    pattern=${pattern%%"${pattern##*[![:space:]]}"}
+    pattern=${pattern#"${pattern%%[![:space:]]*}"}
+    case "$pattern" in ''|'#'*) continue ;; esac
+    grep -Fq "$pattern" "$log_file" || return 1
+  done < <(sed "s/{smp}/$smp/g" "$expected_file")
 
-  ! grep -En 'panic|FAILED|SystemFailure' "$log_file"
+  # Dispatcher-backed extension wiring: these lines render from the
+  # published SBI_DISPATCHER (presence chains + Once publish). A missing
+  # line means an extension was silently dropped during boot assembly.
+  grep -F 'Platform HSM Extension        : Available' "$log_file" || return 1
+  grep -F 'Platform RFence Extension     : Available' "$log_file" || return 1
+  grep -F 'Platform SUSP Extension       : Available' "$log_file" || return 1
+  grep -F 'Platform PMU Extension        : Available' "$log_file" || return 1
+
+  # Boot-policy order guard: the boot-hart presentation sequence must
+  # appear in phase order. A reorder or drop means the boot policy
+  # changed even when every substring grep stays green.
+  awk 'BEGIN {
+         n = split("Boot HART ID|Boot HART Privileged Version:|Boot HART MHPM Mask:|Redirecting hart", want, "|")
+       }
+       /Boot HART ID|Boot HART Privileged Version:|Boot HART MHPM Mask:|Redirecting hart/ {
+         count++
+         if ($0 !~ want[count]) fail = 1
+       }
+       END { exit !(count == n && !fail) }' "$log_file" || return 1
+
+  while IFS= read -r pattern || [ -n "$pattern" ]; do
+    pattern=${pattern%%"${pattern##*[![:space:]]}"}
+    pattern=${pattern#"${pattern%%[![:space:]]*}"}
+    case "$pattern" in ''|'#'*) continue ;; esac
+    if grep -Fq "$pattern" "$log_file"; then
+      return 1
+    fi
+  done < "$forbidden_file"
 }
 
 for attempt in $(seq 1 "$attempts"); do

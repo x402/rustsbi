@@ -18,18 +18,25 @@ awesome things related to RustSBI, which includes some implementation projects m
 Users on commercial boards may visit implementation specific distribution links depending on the platforms they need,
 or consult vendors if they provide discrete RustSBI package support.
 
-## Minimum supported Rust version
+## Rust toolchain policy
 
-To compile RustSBI library, you need at least stable Rust version of `rustc 1.88.0`.
-The RustSBI Prototyper and ArceBoot requires nightly Rust version of `rustc 1.97.0-nightly (4b0c9d76a 2026-05-10)`.
+All crates under `library/` support Rust 1.88 or later on their supported targets. Each crate inherits this
+minimum supported Rust version (MSRV) from the root [`Cargo.toml`](Cargo.toml). With both the MSRV and current
+stable Rust, CI tests the host-compatible libraries, checks every library on RV64IMAC with all features, and checks the
+RV32IMAC-compatible libraries on RV32IMAC.
+
+Repository-wide development, including RustSBI Prototyper, uses the date-pinned nightly toolchain in
+[`rust-toolchain.toml`](rust-toolchain.toml). `rustup` selects it automatically for commands run in this repository.
 
 ## Build this project
 
-### For firmware user
+### Native development
 
-If you need to build RustSBI firmware for M-mode, please refer to the [RustSBI Prototyper](prototyper/README.md) documentation.
+#### For firmware user
 
-### For library user
+If you need to build RustSBI firmware for M-mode, please refer to the [RustSBI Prototyper](firmware/README.md) documentation.
+
+#### For library user
 
 RustSBI is usually used as a library or dependency. If you wish to, you may build RustSBI library itself using the
 following command:
@@ -41,24 +48,42 @@ cargo build
 The build should finish without any errors.
 
 Building under native platform will allow development of hypervisors and emulators.
-To cross-build for a RISC-V platform environment, you may install the target and build onto it instead:
+To check the libraries on RISC-V with stable Rust, install the target for that toolchain and cross-build:
 
 ```bash
-# If you don't have the cross compile target installed, install it first
-rustup target add riscv64imac-unknown-none-elf
-# Build this project as library
-cargo build --target riscv64imac-unknown-none-elf
+rustup target add --toolchain stable riscv64imac-unknown-none-elf
+cargo +stable build --locked --target riscv64imac-unknown-none-elf
 ```
 
 The target platform of RISC-V platform firmware is usually a bare metal target.
 Under normal circumstances these targets in Rust would start with `riscv??-` and end with `-none-elf`.
+
+### Or use the Docker development environment
+
+The repository provides a Docker image for development on hosts that do not match the CI environment.
+It includes the pinned nightly toolchain, RISC-V targets, QEMU, U-Boot tools, `cargo-binutils` and `axconfig-gen`.
+
+For a one-off check, run:
+
+```bash
+docker build -t rustsbi-dev .
+docker run --rm -v "$PWD:/workspace" -w /workspace rustsbi-dev cargo check
+```
+
+For an interactive shell, run:
+
+```bash
+docker run --rm -it -v "$PWD:/workspace" -w /workspace rustsbi-dev bash
+```
+
+The source tree is mounted at `/workspace`; changes and build artifacts stay on the host.
 
 ## Features
 
 - Feature rich and extensible operating system runtime
 - Empower support, compatibility for machines, hypervisors and emulators
 - Support to and develop with RISC-V SBI specification v2.0 ratified
-- Written in Rust, builds under stable Rust
+- Libraries support stable Rust
 - Capable to develop with other firmware ecosystem projects
 - Adapted for operating system kernel models on your choice
 - Included a LLM based Agent module called RustSBI Agent (https://github.com/rustsbi/Agent), which is designed to assist system software developers in their development process
@@ -100,9 +125,7 @@ slides and blog articles of these talks are available at [RustSBI/slides](https:
 
 ## Security
 
-If you discover a security vulnerability within RustSBI, please send an email to the security team at
-[security@rustsbi.com](mailto:security@rustsbi.com). All security vulnerabilities will be promptly addressed.
-Please do not disclose security issues publicly until they have been addressed by the maintainers.
+Please see our [Security Policy](SECURITY.md) for information on how to report security vulnerabilities.
 
 ## Sponsors
 

@@ -1,6 +1,6 @@
 #[cfg(feature = "machine")]
 use riscv::register::{marchid, mimpid, mvendorid};
-use spec::binary::{HartMask, Physical, SbiRet, SharedPtr};
+use spec::binary::{HartMask, Physical, SbiRet, SharedPtr, TriggerMask};
 
 /// RustSBI environment call handler.
 pub trait RustSBI {
@@ -118,6 +118,10 @@ pub struct _StandardExtensionProbe {
     pub cppc: usize,
     pub nacl: usize,
     pub sta: usize,
+    pub mpxy: usize,
+    pub dbtr: usize,
+    pub fwft: usize,
+    pub sse: usize,
     // NOTE: remember to add to `fn probe_extension` in `impl _ExtensionProbe` as well
 }
 
@@ -137,32 +141,12 @@ impl _ExtensionProbe for _StandardExtensionProbe {
             spec::cppc::EID_CPPC => self.cppc,
             spec::nacl::EID_NACL => self.nacl,
             spec::sta::EID_STA => self.sta,
+            spec::mpxy::EID_MPXY => self.mpxy,
+            spec::dbtr::EID_DBTR => self.dbtr,
+            spec::fwft::EID_FWFT => self.fwft,
+            spec::sse::EID_SSE => self.sse,
             _ => spec::base::UNAVAILABLE_EXTENSION,
         }
-    }
-}
-
-#[doc(hidden)]
-#[inline(always)]
-pub fn _rustsbi_fence<T: crate::Fence>(fence: &T, param: [usize; 6], function: usize) -> SbiRet {
-    let [param0, param1, param2, param3, param4] =
-        [param[0], param[1], param[2], param[3], param[4]];
-    let hart_mask = HartMask::from_mask_base(param0, param1);
-    match function {
-        spec::rfnc::REMOTE_FENCE_I => fence.remote_fence_i(hart_mask),
-        spec::rfnc::REMOTE_SFENCE_VMA => fence.remote_sfence_vma(hart_mask, param2, param3),
-        spec::rfnc::REMOTE_SFENCE_VMA_ASID => {
-            fence.remote_sfence_vma_asid(hart_mask, param2, param3, param4)
-        }
-        spec::rfnc::REMOTE_HFENCE_GVMA_VMID => {
-            fence.remote_hfence_gvma_vmid(hart_mask, param2, param3, param4)
-        }
-        spec::rfnc::REMOTE_HFENCE_GVMA => fence.remote_hfence_gvma(hart_mask, param2, param3),
-        spec::rfnc::REMOTE_HFENCE_VVMA_ASID => {
-            fence.remote_hfence_vvma_asid(hart_mask, param2, param3, param4)
-        }
-        spec::rfnc::REMOTE_HFENCE_VVMA => fence.remote_hfence_vvma(hart_mask, param2, param3),
-        _ => SbiRet::not_supported(),
     }
 }
 
@@ -201,6 +185,30 @@ pub fn _rustsbi_ipi<T: crate::Ipi>(ipi: &T, param: [usize; 6], function: usize) 
     let [param0, param1] = [param[0], param[1]];
     match function {
         spec::spi::SEND_IPI => ipi.send_ipi(HartMask::from_mask_base(param0, param1)),
+        _ => SbiRet::not_supported(),
+    }
+}
+
+#[doc(hidden)]
+#[inline(always)]
+pub fn _rustsbi_fence<T: crate::Fence>(fence: &T, param: [usize; 6], function: usize) -> SbiRet {
+    let [param0, param1, param2, param3, param4] =
+        [param[0], param[1], param[2], param[3], param[4]];
+    let hart_mask = HartMask::from_mask_base(param0, param1);
+    match function {
+        spec::rfnc::REMOTE_FENCE_I => fence.remote_fence_i(hart_mask),
+        spec::rfnc::REMOTE_SFENCE_VMA => fence.remote_sfence_vma(hart_mask, param2, param3),
+        spec::rfnc::REMOTE_SFENCE_VMA_ASID => {
+            fence.remote_sfence_vma_asid(hart_mask, param2, param3, param4)
+        }
+        spec::rfnc::REMOTE_HFENCE_GVMA_VMID => {
+            fence.remote_hfence_gvma_vmid(hart_mask, param2, param3, param4)
+        }
+        spec::rfnc::REMOTE_HFENCE_GVMA => fence.remote_hfence_gvma(hart_mask, param2, param3),
+        spec::rfnc::REMOTE_HFENCE_VVMA_ASID => {
+            fence.remote_hfence_vvma_asid(hart_mask, param2, param3, param4)
+        }
+        spec::rfnc::REMOTE_HFENCE_VVMA => fence.remote_hfence_vvma(hart_mask, param2, param3),
         _ => SbiRet::not_supported(),
     }
 }
@@ -393,16 +401,111 @@ pub fn _rustsbi_sta<T: crate::Sta>(sta: &T, param: [usize; 6], function: usize) 
     }
 }
 
-#[cfg(target_pointer_width = "32")]
-#[inline]
-const fn concat_u32(h: usize, l: usize) -> u64 {
-    ((h as u64) << 32) | (l as u64)
+#[doc(hidden)]
+#[inline(always)]
+pub fn _rustsbi_fwft<T: crate::Fwft>(fwft: &T, param: [usize; 6], function: usize) -> SbiRet {
+    match function {
+        spec::fwft::SET => match u32::try_from(param[0]) {
+            Ok(feature_id) => fwft.set(feature_id, param[1], param[2]),
+            _ => SbiRet::invalid_param(),
+        },
+        spec::fwft::GET => match u32::try_from(param[0]) {
+            Ok(feature_id) => fwft.get(feature_id),
+            _ => SbiRet::invalid_param(),
+        },
+        _ => SbiRet::not_supported(),
+    }
 }
 
 #[doc(hidden)]
 #[inline(always)]
-pub fn _rustsbi_fence_probe<T: crate::Fence>(fence: &T) -> usize {
-    fence._rustsbi_probe()
+pub fn _rustsbi_dbtr<T: crate::Dbtr>(dbtr: &T, param: [usize; 6], function: usize) -> SbiRet {
+    let [param0, param1] = [param[0], param[1]];
+    match function {
+        spec::dbtr::NUM_TRIGGERS => SbiRet::success(dbtr.num_triggers(param0)),
+        spec::dbtr::SET_SHMEM => dbtr.set_shmem(SharedPtr::new(param0, param1), param[2]),
+        spec::dbtr::READ_TRIGGERS => dbtr.read_triggers(param0, param1),
+        spec::dbtr::INSTALL_TRIGGERS => dbtr.install_triggers(param0),
+        spec::dbtr::UPDATE_TRIGGERS => dbtr.update_triggers(param0),
+        spec::dbtr::UNINSTALL_TRIGGERS => {
+            dbtr.uninstall_triggers(TriggerMask::from_mask_base(param0, param1))
+        }
+        spec::dbtr::ENABLE_TRIGGERS => {
+            dbtr.enable_triggers(TriggerMask::from_mask_base(param0, param1))
+        }
+        spec::dbtr::DISABLE_TRIGGERS => {
+            dbtr.disable_triggers(TriggerMask::from_mask_base(param0, param1))
+        }
+        _ => SbiRet::not_supported(),
+    }
+}
+
+#[doc(hidden)]
+#[inline(always)]
+pub fn _rustsbi_mpxy<T: crate::Mpxy>(mpxy: &T, param: [usize; 6], function: usize) -> SbiRet {
+    let [param0, param1, param2, param3, param4] =
+        [param[0], param[1], param[2], param[3], param[4]];
+    match function {
+        spec::mpxy::GET_SHMEM_SIZE => SbiRet::success(mpxy.get_shmem_size()),
+        spec::mpxy::SET_SHMEM => mpxy.set_shmem(SharedPtr::new(param0, param1), param2),
+        spec::mpxy::GET_CHANNEL_IDS => match u32::try_from(param0) {
+            Ok(start_index) => mpxy.get_channel_ids(start_index),
+            _ => SbiRet::invalid_param(),
+        },
+        spec::mpxy::READ_ATTRIBUTE => match (
+            u32::try_from(param0),
+            u32::try_from(param1),
+            u32::try_from(param2),
+        ) {
+            (Ok(channel_id), Ok(base_attribute_id), Ok(attribute_count)) => mpxy.read_attributes(
+                channel_id,
+                base_attribute_id,
+                attribute_count,
+                SharedPtr::new(param3, param4),
+            ),
+            _ => SbiRet::invalid_param(),
+        },
+        spec::mpxy::WRITE_ATTRIBUTE => match (
+            u32::try_from(param0),
+            u32::try_from(param1),
+            u32::try_from(param2),
+        ) {
+            (Ok(channel_id), Ok(base_attribute_id), Ok(attribute_count)) => mpxy.write_attributes(
+                channel_id,
+                base_attribute_id,
+                attribute_count,
+                SharedPtr::new(param3, param4),
+            ),
+            _ => SbiRet::invalid_param(),
+        },
+        spec::mpxy::SEND_MESSAGE_WITH_RESPONSE => {
+            match (u32::try_from(param0), u32::try_from(param1)) {
+                (Ok(channel_id), Ok(message_id)) => {
+                    mpxy.send_message_with_response(channel_id, message_id, param2)
+                }
+                _ => SbiRet::invalid_param(),
+            }
+        }
+        spec::mpxy::SEND_MESSAGE_WITHOUT_RESPONSE => {
+            match (u32::try_from(param0), u32::try_from(param1)) {
+                (Ok(channel_id), Ok(message_id)) => {
+                    mpxy.send_message_without_response(channel_id, message_id, param2)
+                }
+                _ => SbiRet::invalid_param(),
+            }
+        }
+        spec::mpxy::GET_NOTIFICATION_EVENTS => match u32::try_from(param0) {
+            Ok(channel_id) => mpxy.get_notification_events(channel_id),
+            _ => SbiRet::invalid_param(),
+        },
+        _ => SbiRet::not_supported(),
+    }
+}
+
+#[cfg(target_pointer_width = "32")]
+#[inline]
+const fn concat_u32(h: usize, l: usize) -> u64 {
+    ((h as u64) << 32) | (l as u64)
 }
 
 #[doc(hidden)]
@@ -415,6 +518,12 @@ pub fn _rustsbi_timer_probe<T: crate::Timer>(timer: &T) -> usize {
 #[inline(always)]
 pub fn _rustsbi_ipi_probe<T: crate::Ipi>(ipi: &T) -> usize {
     ipi._rustsbi_probe()
+}
+
+#[doc(hidden)]
+#[inline(always)]
+pub fn _rustsbi_fence_probe<T: crate::Fence>(fence: &T) -> usize {
+    fence._rustsbi_probe()
 }
 
 #[doc(hidden)]
@@ -463,4 +572,87 @@ pub fn _rustsbi_nacl_probe<T: crate::Nacl>(nacl: &T) -> usize {
 #[inline(always)]
 pub fn _rustsbi_sta_probe<T: crate::Sta>(sta: &T) -> usize {
     sta._rustsbi_probe()
+}
+
+#[doc(hidden)]
+#[inline(always)]
+pub fn _rustsbi_fwft_probe<T: crate::Fwft>(fwft: &T) -> usize {
+    fwft._rustsbi_probe()
+}
+
+#[doc(hidden)]
+#[inline(always)]
+pub fn _rustsbi_dbtr_probe<T: crate::Dbtr>(dbtr: &T) -> usize {
+    dbtr._rustsbi_probe()
+}
+
+#[doc(hidden)]
+#[inline(always)]
+pub fn _rustsbi_mpxy_probe<T: crate::Mpxy>(mpxy: &T) -> usize {
+    mpxy._rustsbi_probe()
+}
+
+#[doc(hidden)]
+#[inline(always)]
+pub fn _rustsbi_sse<T: crate::Sse>(sse: &T, param: [usize; 6], function: usize) -> SbiRet {
+    let [param0, param1, param2, param3, param4] =
+        [param[0], param[1], param[2], param[3], param[4]];
+    match function {
+        spec::sse::READ_ATTRS => match (
+            u32::try_from(param0),
+            u32::try_from(param1),
+            u32::try_from(param2),
+        ) {
+            (Ok(event_id), Ok(base_attr_id), Ok(attr_count)) => sse.read_attrs(
+                event_id,
+                base_attr_id,
+                attr_count,
+                SharedPtr::new(param3, param4),
+            ),
+            _ => SbiRet::invalid_param(),
+        },
+        spec::sse::WRITE_ATTRS => match (
+            u32::try_from(param0),
+            u32::try_from(param1),
+            u32::try_from(param2),
+        ) {
+            (Ok(event_id), Ok(base_attr_id), Ok(attr_count)) => sse.write_attrs(
+                event_id,
+                base_attr_id,
+                attr_count,
+                SharedPtr::new(param3, param4),
+            ),
+            _ => SbiRet::invalid_param(),
+        },
+        spec::sse::REGISTER => match u32::try_from(param0) {
+            Ok(event_id) => sse.register(event_id, param1, param2),
+            _ => SbiRet::invalid_param(),
+        },
+        spec::sse::UNREGISTER => match u32::try_from(param0) {
+            Ok(event_id) => sse.unregister(event_id),
+            _ => SbiRet::invalid_param(),
+        },
+        spec::sse::ENABLE => match u32::try_from(param0) {
+            Ok(event_id) => sse.enable(event_id),
+            _ => SbiRet::invalid_param(),
+        },
+        spec::sse::DISABLE => match u32::try_from(param0) {
+            Ok(event_id) => sse.disable(event_id),
+            _ => SbiRet::invalid_param(),
+        },
+        spec::sse::COMPLETE => sse.complete(),
+        spec::sse::INJECT => match u32::try_from(param0) {
+            Ok(event_id) => sse.inject(event_id, param1),
+            _ => SbiRet::invalid_param(),
+        },
+        spec::sse::HART_UNMASK => sse.hart_unmask(),
+        spec::sse::HART_MASK => sse.hart_mask(),
+        _ => SbiRet::not_supported(),
+    }
+}
+
+#[doc(hidden)]
+#[inline(always)]
+pub fn _rustsbi_sse_probe<T: crate::Sse>(sse: &T) -> usize {
+    sse._rustsbi_probe()
 }

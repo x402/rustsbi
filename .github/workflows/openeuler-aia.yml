@@ -4,35 +4,36 @@ on:
   pull_request:
     branches: ["main"]
     paths:
+      - ".cargo/**"
       - ".github/scripts/prototyper-openeuler-aia.sh"
       - ".github/workflows/openeuler-aia.yml"
-      - "library/riscv-aia/**"
-      - "prototyper/prototyper/config/default.toml"
-      - "prototyper/prototyper/src/firmware/**"
-      - "prototyper/prototyper/src/main.rs"
-      - "prototyper/prototyper/src/platform/**"
-      - "prototyper/prototyper/src/riscv/csr.rs"
-      - "prototyper/prototyper/src/sbi/hart_context.rs"
-      - "prototyper/prototyper/src/sbi/ipi.rs"
-      - "prototyper/prototyper/src/sbi/trap/**"
+      - "Cargo.lock"
+      - "Cargo.toml"
+      - "rust-toolchain.toml"
+      - "xtask/**"
+      - "library/**"
+      - "firmware/macros/**"
+      - "firmware/prototyper/**"
   push:
     branches: ["main"]
     paths:
+      - ".cargo/**"
       - ".github/scripts/prototyper-openeuler-aia.sh"
       - ".github/workflows/openeuler-aia.yml"
-      - "library/riscv-aia/**"
-      - "prototyper/prototyper/config/default.toml"
-      - "prototyper/prototyper/src/firmware/**"
-      - "prototyper/prototyper/src/main.rs"
-      - "prototyper/prototyper/src/platform/**"
-      - "prototyper/prototyper/src/riscv/csr.rs"
-      - "prototyper/prototyper/src/sbi/hart_context.rs"
-      - "prototyper/prototyper/src/sbi/ipi.rs"
-      - "prototyper/prototyper/src/sbi/trap/**"
+      - "Cargo.lock"
+      - "Cargo.toml"
+      - "rust-toolchain.toml"
+      - "xtask/**"
+      - "library/**"
+      - "firmware/macros/**"
+      - "firmware/prototyper/**"
   workflow_dispatch:
 
 env:
   CARGO_TERM_COLOR: always
+
+permissions:
+  contents: read
 
 jobs:
   openeuler-aia-boot:
@@ -41,7 +42,7 @@ jobs:
     timeout-minutes: 45
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Install dev dependencies
         run: |
@@ -49,19 +50,16 @@ jobs:
           sudo apt-get install -y curl xz-utils zstd
 
       - name: Install required cargo
-        run: cargo install cargo-binutils
-
-      - name: Install required target
-        run: rustup target add riscv64gc-unknown-none-elf
+        run: cargo install --locked cargo-binutils@0.4.0
 
       - name: Cache openEuler downloads
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: .openeuler-aia/cache
           key: openeuler-25.09-riscv64-aia-release-v1
 
       - name: Build RustSBI Prototyper
-        run: cargo prototyper
+        run: cargo prototyper build
 
       - name: Boot openEuler with AIA
         run: |
@@ -71,19 +69,26 @@ jobs:
             -e OPENEULER_AIA_CACHE_DIR=/work/.openeuler-aia/cache \
             -e OPENEULER_AIA_WORK_DIR=/work/.openeuler-aia/work \
             -e OPENEULER_AIA_LOG_DIR=/work/qemu-logs \
-            ubuntu:25.10 \
+            ubuntu:26.04 \
             bash -lc '
               set -euo pipefail
               export DEBIAN_FRONTEND=noninteractive
-              apt-get update
-              apt-get install -y curl qemu-system-misc qemu-utils xz-utils zstd
+              # Use the same Ubuntu mirror as the Azure-hosted runner.
+              sed -i -E \
+                "s@http://(archive|security).ubuntu.com/ubuntu/?@http://azure.archive.ubuntu.com/ubuntu/@g" \
+                /etc/apt/sources.list.d/ubuntu.sources
+              apt_options=(-o Acquire::Retries=3 -o Acquire::http::Timeout=30)
+              timeout 5m apt-get "${apt_options[@]}" update --error-on=any
+              # virtio-vga needs the VGA ROM from seabios even with -nographic.
+              timeout 5m apt-get "${apt_options[@]}" install -y --no-install-recommends \
+                ca-certificates curl qemu-system-riscv qemu-utils seabios xz-utils zstd
               qemu-system-riscv64 --version
               .github/scripts/prototyper-openeuler-aia.sh
             '
 
       - name: Upload openEuler AIA log
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: openeuler-aia-log
           path: qemu-logs/openeuler-aia.log

@@ -9,16 +9,20 @@ members = [
     "library/riscv-aia",
     "library/riscv-cove",
     "library/riscv-cove-rt",
+    "library/rpmi",
     "library/penglai",
     "library/pmpm",
     "library/smm",
-    "library/rdsm",
-    "prototyper/prototyper",
-    "prototyper/bench-kernel",
-    "prototyper/test-kernel",
-    "arceboot",
+    "firmware/macros",
+    "firmware/runtime",
+    "firmware/prototyper",
+    "firmware/bench-kernel",
+    "firmware/test-kernel",
     "xtask",
 ]
+# Default Cargo commands operate on host-testable libraries.
+# `sbi-testing` is checked on RISC-V targets in CI. Firmware is built through
+# xtask.
 default-members = [
     "library/macros",
     "library/sbi-rt",
@@ -26,12 +30,16 @@ default-members = [
     "library/rustsbi",
     "library/riscv-aia",
     "library/riscv-cove",
+    "library/riscv-cove-rt",
+    "library/rpmi",
     "library/penglai",
-    "library/pmpm"
+    "library/pmpm",
+    "library/smm",
 ]
 
 [workspace.package]
 edition = "2024"
+rust-version = "1.88"
 license = "MulanPSL-2.0 OR MIT"
 repository = "https://github.com/rustsbi/rustsbi"
 
@@ -39,6 +47,6 @@ repository = "https://github.com/rustsbi/rustsbi"
 debug = true
 
 [workspace.dependencies]
-riscv = { version = "0.16.0", default-features = false }
+riscv = { version = "0.16.1", default-features = false }
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html

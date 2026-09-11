@@ -1,0 +1,530 @@
+//! Machine trap handling: interrupts, SBI calls, and misaligned access.
+
+use fast_trap::{EntireContext, EntireContextSeparated, EntireResult, FastContext, FastResult};
+use riscv::register::{mepc, mie, mstatus, mtval, satp, sstatus};
+use riscv_decode::{Instruction, decode};
+use sbi_spec::pmu::firmware_event;
+
+use crate::riscv::csr::{CSR_TIME, CSR_TIMEH};
+use crate::riscv::current_hartid;
+use crate::sbi::features::{Extension, hart_has_extension};
+use crate::sbi::hsm::local_hsm;
+use crate::sbi::ipi;
+use crate::sbi::pmu::pmu_firmware_counter_increment;
+use crate::sbi::rfence;
+
+use super::helper::*;
+
+/// Handle an MSDEI (Machine Supervisor Domain External Interrupt).
+///
+/// MSDEI traps to M-mode and must NOT be delegated to S-mode.  In Phase 1,
+/// only the host SID (SIDN 0) exists.  We decode the pending SIDs from
+/// `msideip & msideie`, log them without heap allocation, and clear only
+/// the pending SID bits in `msideie` to acknowledge.
+#[inline]
+#[cfg(feature = "rdsm")]
+pub fn msdei_handler() {
+    let raw_mcause = riscv::register::mcause::read().bits();
+    match crate::sbi::rdsm::interrupt::MsdeiTrap::from_trap(raw_mcause) {
+        Some(msdei) => {
+            let pending_mask = msdei.pending_mask();
+            if pending_mask == 0 {
+                warn!(
+                    "RDSM: MSDEI interrupt on hart {} but no pending SIDs",
+                    current_hartid()
+                );
+            } else {
+                warn!(
+                    "RDSM: MSDEI interrupt on hart {}, pending SID mask: {:#x}",
+                    current_hartid(),
+                    pending_mask
+                );
+                for sid in msdei.pending_sids() {
+                    warn!("RDSM:   pending SID {}", sid);
+                }
+            }
+            // Phase 1: acknowledge by clearing only the pending SID bits
+            // in msideie (not writing 0, which would disable all MSDEI).
+            // Future phases will route interrupts to the appropriate
+            // supervisor domain.
+            let old_msideie = crate::sbi::rdsm::csr::read_msideie();
+            crate::sbi::rdsm::csr::write_msideie(old_msideie & !pending_mask);
+        }
+        None => {
+            // Should not happen — we only call this when mcause indicates MSDEI.
+            error!("RDSM: msdei_handler called but mcause does not indicate MSDEI");
+        }
+    }
+}
+
+#[inline]
+fn enable_mtimer_if_no_sstc() {
+    if !hart_has_extension(current_hartid(), Extension::Sstc) {
+        // SAFETY: M-mode write to this hart's mie.
+        unsafe {
+            mie::set_mtimer();
+        }
+    }
+}
+
+#[inline]
+pub fn switch(mut ctx: FastContext, start_addr: usize, opaque: usize) -> FastResult {
+    // SAFETY: M-mode may write the S-mode CSRs being programmed.
+    unsafe {
+        // stvec BASE is four-byte aligned; HSM entry points may only be
+        // two-byte aligned.
+        if start_addr & 0x3 == 0 {
+            core::arch::asm!(
+                "csrw stvec, {start_addr}",
+                start_addr = in(reg) start_addr,
+                options(nomem),
+            );
+        }
+        core::arch::asm!("csrw sscratch, zero", "csrw sie, zero", options(nomem),);
+        sstatus::clear_sie();
+        satp::write(satp::Satp::from_bits(0));
+    }
+
+    ctx.regs().a[0] = current_hartid();
+    ctx.regs().a[1] = opaque;
+    ctx.regs().pc = start_addr;
+    ctx.call(2)
+}
+
+#[inline]
+pub fn msoft_ipi_handler() {
+    use ipi::get_and_reset_ipi_type;
+    ipi::claim_ipi();
+    let ipi_type = get_and_reset_ipi_type();
+    if (ipi_type & ipi::IPI_TYPE_SSOFT) != 0 {
+        pmu_firmware_counter_increment(firmware_event::IPI_RECEIVED);
+        // SAFETY: M-mode may write mip.SSIP; the bit only signals an S-mode
+        // software interrupt.
+        unsafe {
+            riscv::register::mip::set_ssoft();
+        }
+    }
+    if (ipi_type & ipi::IPI_TYPE_FENCE) != 0 {
+        rfence::rfence_handler();
+    }
+}
+
+#[inline]
+pub fn msoft_handler(ctx: FastContext) -> FastResult {
+    match local_hsm().start() {
+        Ok(next_stage) => {
+            ipi::claim_ipi();
+            // SAFETY: M-mode writes to this hart's mstatus and mie in
+            // preparation for the mret into the next stage.
+            unsafe {
+                mstatus::set_mpie();
+                mstatus::set_mpp(next_stage.next_mode);
+                mie::set_msoft();
+            }
+            enable_mtimer_if_no_sstc();
+            switch(ctx, next_stage.start_addr, next_stage.opaque)
+        }
+        Err(rustsbi::spec::hsm::HART_STOP) => {
+            ipi::claim_ipi();
+            // SAFETY: M-mode write to this hart's mie.
+            unsafe {
+                mie::set_msoft();
+            }
+            riscv::asm::wfi();
+            ctx.restore()
+        }
+        _ => {
+            msoft_ipi_handler();
+            ctx.restore()
+        }
+    }
+}
+
+#[inline]
+pub fn mext_handler(ctx: FastContext) -> FastResult {
+    use ipi::get_and_reset_ipi_type;
+
+    if !crate::sbi::ipi::uses_imsic() || !hart_has_extension(current_hartid(), Extension::Smaia) {
+        warn!("MachineExternal: AIA is not available on this hart");
+        return ctx.restore();
+    }
+
+    let Some(ipi_iid) = crate::platform::board_info()
+        .imsic
+        .as_ref()
+        .map(|imsic| imsic.ipi_iid)
+    else {
+        warn!("MachineExternal: missing AIA platform info");
+        return ctx.restore();
+    };
+
+    let claimed = riscv_aia::register::mtopei::claim();
+    match claimed.iid() {
+        Some(id) if ipi_iid == id => match local_hsm().start() {
+            Ok(next_stage) => {
+                // SAFETY: M-mode writes to this hart's mstatus and mie in
+                // preparation for the mret into the next stage.
+                unsafe {
+                    mstatus::set_mpie();
+                    mstatus::set_mpp(next_stage.next_mode);
+                    mie::set_msoft();
+                    mie::set_mext();
+                }
+                enable_mtimer_if_no_sstc();
+                return switch(ctx, next_stage.start_addr, next_stage.opaque);
+            }
+            Err(rustsbi::spec::hsm::HART_STOP) => {
+                // SAFETY: M-mode write to this hart's mie.
+                unsafe {
+                    mie::set_mext();
+                }
+                riscv::asm::wfi();
+                return ctx.restore();
+            }
+            _ => {
+                let ipi_type = get_and_reset_ipi_type();
+                if (ipi_type & ipi::IPI_TYPE_SSOFT) != 0 {
+                    pmu_firmware_counter_increment(firmware_event::IPI_RECEIVED);
+                    // SAFETY: M-mode may write mip.SSIP; the bit only
+                    // signals an S-mode software interrupt.
+                    unsafe {
+                        riscv::register::mip::set_ssoft();
+                    }
+                }
+                if (ipi_type & ipi::IPI_TYPE_FENCE) != 0 {
+                    rfence::rfence_handler();
+                }
+            }
+        },
+        Some(id) => {
+            warn!(
+                "MachineExternal: unexpected IID {} at priority {}",
+                id.number(),
+                claimed.iprio()
+            );
+        }
+        None => {}
+    }
+    ctx.restore()
+}
+
+#[inline]
+#[allow(clippy::too_many_arguments)]
+pub fn sbi_call_handler(
+    mut ctx: FastContext,
+    a1: usize,
+    a2: usize,
+    a3: usize,
+    a4: usize,
+    a5: usize,
+    a6: usize,
+    a7: usize,
+) -> FastResult {
+    // 1. Handle private RDSM extension (EID 0x5244534D)
+    #[cfg(feature = "rdsm")]
+    if a7 == crate::sbi::rdsm::EID_RDSM {
+        ctx.regs().a = [ctx.a0(), a1, a2, a3, a4, a5, a6, a7];
+        return ctx.continue_with(crate::sbi::rdsm::handle_rdsm_entire, ());
+    }
+
+    // 2. Handle SUPD extension (EID 0x53555044)
+    #[cfg(feature = "rdsm")]
+    if a7 == crate::sbi::rdsm::EID_SUPD {
+        if a6 == 0 {
+            // FID 0: sbi_supd_get_active_domains -> error=0, value=0b11 (Host bit 0 + Confidential bit 1)
+            ctx.regs().a[0] = 0;
+            ctx.regs().a[1] = 0b11;
+        } else {
+            ctx.regs().a[0] = (-1isize) as usize; // SBI_ERR_NOT_SUPPORTED
+            ctx.regs().a[1] = 0;
+        }
+        let epc = mepc::read();
+        unsafe { mepc::write(epc + get_inst(epc).1) };
+        return ctx.restore();
+    }
+
+    // 3. Handle COVH (0x434F5648) and COVI (0x434F5649) forward to TSM (TEECALL)
+    #[cfg(feature = "rdsm")]
+    if a7 == crate::sbi::rdsm::EID_COVH || a7 == crate::sbi::rdsm::EID_COVI {
+        // COVH/COVI are host-domain extensions: only forward ecalls that
+        // arrived from the host supervisor domain to the TSM.
+        #[cfg(target_arch = "riscv64")]
+        {
+            let caller_sdid = crate::sbi::rdsm::csr::Mmpt::read().sdid();
+            if caller_sdid != crate::sbi::rdsm::rdsm_context().host_sdid {
+                ctx.regs().a[0] = (-8isize) as usize; // SBI_ERR_DENIED
+                ctx.regs().a[1] = 0;
+                let epc = mepc::read();
+                unsafe {
+                    mepc::write(epc + get_inst(epc).1);
+                }
+                return ctx.restore();
+            }
+        }
+        if !crate::sbi::rdsm::is_tsm_ready() {
+            ctx.regs().a[0] = (-1isize) as usize; // SBI_ERR_FAILED
+            ctx.regs().a[1] = 0;
+            let epc = mepc::read();
+            unsafe {
+                mepc::write(epc + get_inst(epc).1);
+            }
+            return ctx.restore();
+        }
+        ctx.regs().a = [ctx.a0(), a1, a2, a3, a4, a5, a6, a7];
+        return ctx.continue_with(crate::sbi::rdsm::handle_teecall_entire, ());
+    }
+
+    use sbi_spec::{base, hsm, legacy};
+    let mut ret = crate::sbi::handle_ecall(a7, a6, [ctx.a0(), a1, a2, a3, a4, a5]);
+    if ret.is_ok() {
+        match (a7, a6) {
+            (hsm::EID_HSM, hsm::HART_SUSPEND)
+                if matches!(ctx.a0() as u32, hsm::suspend_type::NON_RETENTIVE) =>
+            {
+                return switch(ctx, a1, a2);
+            }
+            (base::EID_BASE, base::PROBE_EXTENSION) => match ctx.a0() {
+                legacy::LEGACY_SET_TIMER => {
+                    ret.value = crate::sbi::timer().is_some() as usize;
+                }
+                legacy::LEGACY_CONSOLE_PUTCHAR | legacy::LEGACY_CONSOLE_GETCHAR => {
+                    ret.value = crate::sbi::console().is_some() as usize;
+                }
+                #[cfg(feature = "rdsm")]
+                crate::sbi::rdsm::EID_SUPD => {
+                    ret.value = 1;
+                }
+                #[cfg(feature = "rdsm")]
+                crate::sbi::rdsm::EID_COVH => {
+                    ret.value = crate::sbi::rdsm::is_tsm_ready() as usize;
+                }
+                #[cfg(feature = "rdsm")]
+                crate::sbi::rdsm::EID_COVI => {
+                    ret.value = 0;
+                }
+                _ => {}
+            },
+            _ => {}
+        }
+    } else {
+        match a7 {
+            legacy::LEGACY_SET_TIMER => {
+                if let Some(timer) = crate::sbi::timer() {
+                    #[cfg(target_pointer_width = "64")]
+                    let value = ctx.a0() as u64;
+                    #[cfg(target_pointer_width = "32")]
+                    let value = ((a1 as u64) << 32) | ctx.a0() as u64;
+                    rustsbi::Timer::set_timer(timer, value);
+                    ret.error = 0;
+                    ret.value = a1;
+                }
+            }
+            legacy::LEGACY_CONSOLE_PUTCHAR => {
+                if let Some(console) = crate::sbi::console() {
+                    // Legacy putchar has no backend-error return channel.
+                    let _ = console.write_byte_blocking(ctx.a0() as u8);
+                    ret.error = 0;
+                    ret.value = a1;
+                }
+            }
+            legacy::LEGACY_CONSOLE_GETCHAR => {
+                if let Some(console) = crate::sbi::console() {
+                    ret.error = console.try_read_byte().map_or(usize::MAX, usize::from);
+                    ret.value = a1;
+                }
+            }
+            _ => {}
+        }
+    }
+    ctx.regs().a = [ret.error, ret.value, a2, a3, a4, a5, a6, a7];
+    let epc = mepc::read();
+    // SAFETY: M-mode mepc write; ECALL is always 32 bits, even with the C
+    // extension, so advancing by four skips it without reading S-mode memory.
+    unsafe { mepc::write(epc + 4) };
+    ctx.restore()
+}
+
+#[inline]
+pub fn delegate(ctx: &mut EntireContextSeparated) {
+    use riscv::register::{mcause, scause, sepc, sstatus, stval, stvec};
+    // SAFETY: M-mode trap handling may write the S-mode trap CSRs and mepc.
+    unsafe {
+        sepc::write(ctx.regs().pc);
+        scause::write(scause::Scause::from_bits(mcause::read().bits()));
+        stval::write(mtval::read());
+        sstatus::clear_sie();
+        if mstatus::read().mpp() == mstatus::MPP::Supervisor {
+            sstatus::set_spp(sstatus::SPP::Supervisor);
+        } else {
+            sstatus::set_spp(sstatus::SPP::User);
+        }
+        mstatus::set_mpp(mstatus::MPP::Supervisor);
+        mepc::write(stvec::read().address());
+    }
+}
+
+#[inline]
+pub extern "C" fn illegal_instruction_handler(raw_ctx: EntireContext) -> EntireResult {
+    let mut ctx = raw_ctx.split().0;
+
+    let inst = decode(mtval::read() as u32);
+    match inst {
+        Ok(Instruction::Csrrs(csr)) => match csr.csr() as u16 {
+            CSR_TIME => {
+                save_reg_x(
+                    &mut ctx,
+                    csr.rd() as usize,
+                    crate::sbi::timer().unwrap().get_time(),
+                );
+            }
+            CSR_TIMEH => {
+                save_reg_x(
+                    &mut ctx,
+                    csr.rd() as usize,
+                    crate::sbi::timer().unwrap().get_timeh(),
+                );
+            }
+            _ => {
+                delegate(&mut ctx);
+                return ctx.restore();
+            }
+        },
+        _ => {
+            delegate(&mut ctx);
+            return ctx.restore();
+        }
+    }
+    let epc = mepc::read();
+    // SAFETY: M-mode mepc write; the increment skips the emulated CSR
+    // instruction.
+    unsafe {
+        mepc::write(epc + get_inst(epc).1);
+    }
+    ctx.restore()
+}
+
+#[inline]
+pub extern "C" fn load_misaligned_handler(ctx: EntireContext) -> EntireResult {
+    let mut ctx = ctx.split().0;
+    let current_pc = mepc::read();
+    let current_addr = mtval::read();
+
+    let (current_inst, inst_len) = get_inst(current_pc);
+    debug!(
+        "Misaligned load: inst/{:x?}, load {:x?} in {:x?}",
+        current_inst, current_addr, current_pc
+    );
+    let decode_result = decode(current_inst as u32);
+
+    let inst_type = match decode_result {
+        Ok(Instruction::Lb(data)) => (data.rd(), VarType::Signed, 1),
+        Ok(Instruction::Lbu(data)) => (data.rd(), VarType::UnSigned, 1),
+        Ok(Instruction::Lh(data)) => (data.rd(), VarType::Signed, 2),
+        Ok(Instruction::Lhu(data)) => (data.rd(), VarType::UnSigned, 2),
+        Ok(Instruction::Lw(data)) => (data.rd(), VarType::Signed, 4),
+        Ok(Instruction::Lwu(data)) => (data.rd(), VarType::UnSigned, 4),
+        Ok(Instruction::Ld(data)) => (data.rd(), VarType::Signed, 8),
+        Ok(Instruction::Flw(data)) => (data.rd(), VarType::Float, 4),
+        _ => {
+            delegate(&mut ctx);
+            return ctx.restore();
+        }
+    };
+    let (target_reg, var_type, len) = inst_type;
+    let raw_data = get_data(current_addr, len);
+    let read_data = match var_type {
+        VarType::Signed => match len {
+            1 => raw_data as i8 as usize,
+            2 => raw_data as i16 as usize,
+            4 => raw_data as i32 as usize,
+            8 => raw_data as i64 as usize,
+            _ => panic!("Invalid len"),
+        },
+        VarType::UnSigned => match len {
+            1 => raw_data as u8 as usize,
+            2 => raw_data as u16 as usize,
+            4 => raw_data as u32 as usize,
+            8 => raw_data as u64 as usize,
+            _ => panic!("Invalid len"),
+        },
+        VarType::Float => match len {
+            4 => raw_data as u32 as usize,
+            8 => raw_data as u64 as usize,
+            _ => panic!("Invalid len"),
+        },
+    };
+    debug!(
+        "read 0x{:x} from 0x{:x} to x{}, len 0x{:x}",
+        read_data, current_addr, target_reg, len
+    );
+    match var_type {
+        VarType::Signed | VarType::UnSigned => save_reg_x(&mut ctx, target_reg as usize, read_data),
+        VarType::Float => set_reg_f(target_reg as usize, len, raw_data),
+    };
+    // SAFETY: M-mode mepc write; the increment skips the emulated access.
+    unsafe {
+        mepc::write(current_pc + inst_len);
+    }
+    ctx.restore()
+}
+
+#[inline]
+pub extern "C" fn store_misaligned_handler(ctx: EntireContext) -> EntireResult {
+    let mut ctx = ctx.split().0;
+    let current_pc = mepc::read();
+    let current_addr = mtval::read();
+
+    let (current_inst, inst_len) = get_inst(current_pc);
+    debug!(
+        "Misaligned store: inst/{:x?}, store {:x?} in {:x?}",
+        current_inst, current_addr, current_pc
+    );
+
+    let decode_result = decode(current_inst as u32);
+
+    let inst_type = match decode_result {
+        Ok(Instruction::Sb(data)) => (data.rs2(), VarType::UnSigned, 1),
+        Ok(Instruction::Sh(data)) => (data.rs2(), VarType::UnSigned, 2),
+        Ok(Instruction::Sw(data)) => (data.rs2(), VarType::UnSigned, 4),
+        Ok(Instruction::Sd(data)) => (data.rs2(), VarType::UnSigned, 8),
+        Ok(Instruction::Fsw(data)) => (data.rs2(), VarType::Float, 4),
+        _ => panic!("Unsupported inst"),
+    };
+    let (target_reg, var_type, len) = inst_type;
+    let raw_data = match var_type {
+        VarType::Signed | VarType::UnSigned => get_reg_x(&mut ctx, target_reg as usize) as u64,
+        VarType::Float => get_reg_f(target_reg as usize, len),
+    };
+
+    let read_data = match var_type {
+        VarType::Signed => match len {
+            _ => panic!("Can not store signed data"),
+        },
+        VarType::UnSigned => match len {
+            1 => &(raw_data as u8).to_le_bytes()[..],
+            2 => &(raw_data as u16).to_le_bytes()[..],
+            4 => &(raw_data as u32).to_le_bytes()[..],
+            8 => &(raw_data as u64).to_le_bytes()[..],
+            _ => panic!("Invalid len"),
+        },
+        VarType::Float => match len {
+            4 => &(raw_data as u32).to_le_bytes()[..],
+            8 => &(raw_data as u64).to_le_bytes()[..],
+            _ => panic!("Invalid len"),
+        },
+    };
+
+    debug!(
+        "save 0x{:x} to 0x{:x}, len 0x{:x}",
+        raw_data, current_addr, len
+    );
+    for i in 0..read_data.len() {
+        save_byte(current_addr + i, read_data[i] as usize);
+    }
+
+    // SAFETY: M-mode mepc write; the increment skips the emulated access.
+    unsafe {
+        mepc::write(current_pc + inst_len);
+    }
+    ctx.restore()
+}

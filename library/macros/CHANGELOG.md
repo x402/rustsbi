@@ -9,8 +9,14 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- Add RustSBI derive support for the SBI Message Proxy extension.
+- Add RustSBI derive support for the SBI Debug Triggers extension.
+- Add RustSBI derive support for the SBI Firmware Features extension.
+- Add RustSBI derive support for the SBI Supervisor Software Events extension.
+
 ### Modified
 
+- Declare Rust 1.88 as the minimum supported Rust version through workspace metadata.
 - Migrate rustsbi-macros crate to Rust 2024 edition.
 
 ### Fixed

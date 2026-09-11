@@ -145,13 +145,16 @@ done
 cleanup
 trap - EXIT
 
-grep -F "IMSIC: base=0x" "$log_file"
-grep -F "AIA: IMSIC IPI + Sstc timer backend initialized" "$log_file"
+# Show QEMU startup errors before the boot-marker checks can fail.
+tail -n 160 "$log_file"
+
 grep -F "Platform IPI Extension        : IMSIC" "$log_file"
 grep -F "automatically in 0s" "$log_file"
 grep -F "Loading Linux" "$log_file"
 grep -F "Loading initial ramdisk" "$log_file"
 grep -F "localhost login:" "$log_file"
-! grep -Eq "Kernel panic|panic|FAILED|SystemFailure|Invalid data" "$log_file"
+if grep -Eq "Kernel panic|panic|FAILED|SystemFailure|Invalid data" "$log_file"; then
+    exit 1
+fi
 
 echo "openEuler AIA boot log: $log_file"

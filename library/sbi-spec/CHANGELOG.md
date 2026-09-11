@@ -9,8 +9,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 ### Added
 
 - base: add `Version::V3_0`; RISC-V SBI v3.0 is ratified in Jul 17, 2025.
+- sse: add standard event and event attribute identifiers from RISC-V SBI v3.0.
 
 ### Modified
+
+- Declare Rust 1.88 as the minimum supported Rust version through workspace metadata.
+- pmu: rename `CounterCfgFlags`, `CounterStartFlags`, and `CounterStopFlags` to `ConfigFlags`,
+  `StartFlags`, and `StopFlags`; retain deprecated aliases for source compatibility.
 
 ### Fixed
 
