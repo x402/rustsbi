@@ -129,6 +129,9 @@ unsafe fn csr_read_allow_dyn(csr: u16, trap_info: *mut TrapInfo) -> usize {
         crate::riscv::csr::CSR_MSDCFG => unsafe {
             csr_read_allow::<{ crate::riscv::csr::CSR_MSDCFG }>(trap_info)
         },
+        // mstateen0 (Smstateen): probed by rdsm-fw to enable the CTX bit so
+        // the TSM can keep its per-hart id in `scontext`.
+        0x30c => unsafe { csr_read_allow::<0x30c>(trap_info) },
         _ => {
             // Unknown / unimplemented CSR - write mcause = 0 (trap occurred).
             unsafe { core::ptr::write_volatile(&mut (*trap_info).mcause, 0) };
@@ -155,6 +158,8 @@ unsafe fn csr_write_allow_dyn(csr: u16, trap_info: *mut TrapInfo, value: usize) 
         crate::riscv::csr::CSR_MSDCFG => unsafe {
             csr_write_allow::<{ crate::riscv::csr::CSR_MSDCFG }>(trap_info, value)
         },
+        // mstateen0 (Smstateen): rdsm-fw enables the CTX bit (see above).
+        0x30c => unsafe { csr_write_allow::<0x30c>(trap_info, value) },
         _ => {
             // Unknown / unimplemented CSR - write mcause = 0 (trap occurred).
             unsafe { core::ptr::write_volatile(&mut (*trap_info).mcause, 0) };

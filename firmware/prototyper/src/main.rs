@@ -76,6 +76,11 @@ fn boot_hart(mut boot: BootInfo) {
 }
 
 fn secondary_hart(boot: Option<&BootInfo>) {
+    // TODO(multi-hart): secondary harts do not run rdsm_init() yet, so their
+    // per-hart RDSM context (mmpt programming, THCS, domain ID state) stays at
+    // reset values. Enabling the multi-hart RDSM boot flow requires a runtime
+    // with multi-hart execution to validate; tracked as phase-5.6 Track 3b
+    // (NEMU multi-hart execution model, separately scoped).
     platform::wait_until_ready();
     detect_hart_features();
     trap_stack::prepare_for_trap();
