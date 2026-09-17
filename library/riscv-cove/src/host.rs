@@ -109,6 +109,47 @@ mod fid {
     pub const TVM_REMOVE_PAGES: usize = 19;
 }
 
+/// Bit position of the `COVE_TSM_CAP_PROMOTE_TVM` capability in the
+/// `tsm_capabilities` field of [`TsmInfo`].
+///
+/// Declared in §10.2, Table 9.
+pub const COVE_TSM_CAP_PROMOTE_TVM: usize = 0;
+/// Bit position of the `COVE_TSM_CAP_ATTESTATION_LOCAL` capability in the
+/// `tsm_capabilities` field of [`TsmInfo`].
+///
+/// Declared in §10.2, Table 9.
+pub const COVE_TSM_CAP_ATTESTATION_LOCAL: usize = 1;
+/// Bit position of the `COVE_TSM_CAP_ATTESTATION_REMOTE` capability in the
+/// `tsm_capabilities` field of [`TsmInfo`].
+///
+/// Declared in §10.2, Table 9.
+pub const COVE_TSM_CAP_ATTESTATION_REMOTE: usize = 2;
+/// Bit position of the `COVE_TSM_CAP_AIA` capability in the
+/// `tsm_capabilities` field of [`TsmInfo`].
+///
+/// Declared in §10.2, Table 9.
+pub const COVE_TSM_CAP_AIA: usize = 3;
+/// Bit position of the `COVE_TSM_CAP_MRIF` capability in the
+/// `tsm_capabilities` field of [`TsmInfo`].
+///
+/// Declared in §10.2, Table 9.
+pub const COVE_TSM_CAP_MRIF: usize = 4;
+/// Bit position of the `COVE_TSM_CAP_MEMORY_ALLOCATION` capability in the
+/// `tsm_capabilities` field of [`TsmInfo`].
+///
+/// Declared in §10.2, Table 9.
+pub const COVE_TSM_CAP_MEMORY_ALLOCATION: usize = 5;
+
+/// Identifier of the Salus implementation of the CoVE specification.
+///
+/// Declared in §10.2, Table 10.
+pub const COVE_TSM_IMPL_SALUS: u32 = 1;
+/// Identifier of the Assured Confidential Execution (ACE) implementation of
+/// the CoVE specification.
+///
+/// Declared in §10.2, Table 10.
+pub const COVE_TSM_IMPL_ACE: u32 = 2;
+
 /// Possible state of a TEE Virtual Machine (TVM).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 #[repr(u32)]
@@ -203,6 +244,54 @@ pub struct TvmCreateParams {
     /// the value returned in tsm_info.vm_state_pages returned by the
     /// call to sbi_covh_get_tsm_info().
     pub tvm_state_addr: usize,
+}
+
+/// NACL shared memory layout used between the TSM and the host.
+///
+/// The host and TSM use the Nested Acceleration (NACL) extension based shared
+/// memory interface to exchange trap-related CSRs and GPRs needed by the host
+/// to handle TVM exits. The TSM is responsible for writing any trap-related
+/// CSRs and GPRs needed by the host to handle the exception, and for reading
+/// the returned results from NACL shared memory and forwarding them to the TVM.
+///
+/// Declared in §8.2.1.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+#[repr(C)]
+pub struct NaclShmem {
+    /// Scratch space. The layout of this scratch space is defined by the
+    /// particular function being invoked.
+    ///
+    /// For the `sbi_covh_run_tvm_vcpu()` function in the COVH extension, the
+    /// layout of this scratch space matches the [`TsmShmemScratch`] struct.
+    pub scratch: [u64; 256],
+    pub _reserved: [u64; 240],
+    /// Bitmap indicating which CSRs in `csrs` the host wishes to sync.
+    ///
+    /// Currently unused in the CoVE extensions and will not be read or written
+    /// by the TSM.
+    pub dirty_bitmap: [u64; 16],
+    /// Hypervisor and virtual-supervisor CSRs. The 12-bit CSR number is
+    /// transformed into a 10-bit index by extracting bits `{csr[11:10], csr[7:0]}`
+    /// since `csr[9:8]` is always 2'b10 for HS and VS CSRs.
+    ///
+    /// These CSRs may be updated by `sbi_covh_run_tvm_vcpu()` in the COVH
+    /// extension.
+    pub csrs: [u64; 1024],
+}
+
+/// Scratch space layout for the TSM in NACL shared memory.
+///
+/// Declared in §8.2.1.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+#[repr(C)]
+pub struct TsmShmemScratch {
+    /// General purpose registers for a TVM guest.
+    ///
+    /// The TSM will always read or write the minimum number of registers in
+    /// this set to complete the requested action. To avoid leaking information
+    /// from the TVM, the TSM must follow the given rules.
+    pub guest_gprs: [u64; 32],
+    pub _reserved: [u64; 224],
 }
 
 // TODO unit tests on offsets of TsmInfo.
