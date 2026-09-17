@@ -501,6 +501,40 @@ dependencies = [
 ]
 
 [[package]]
+name = "rdsm"
+version = "0.1.0"
+dependencies = [
+ "rdsm-abi",
+]
+
+[[package]]
+name = "rdsm-abi"
+version = "0.1.0"
+
+[[package]]
+name = "rdsm-mech"
+version = "0.1.0"
+dependencies = [
+ "rdsm",
+ "rdsm-abi",
+ "riscv",
+]
+
+[[package]]
+name = "rdsm-policy"
+version = "0.1.0"
+dependencies = [
+ "log",
+ "rdsm",
+ "rdsm-abi",
+ "rdsm-mech",
+ "riscv",
+ "riscv-cove",
+ "sbi-spec",
+ "spin",
+]
+
+[[package]]
 name = "regex-automata"
 version = "0.4.18"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -630,6 +664,7 @@ dependencies = [
  "log",
  "panic-halt",
  "pastey 0.1.1",
+ "rdsm-policy",
  "riscv",
  "riscv-aia",
  "rustsbi-firmware-runtime",

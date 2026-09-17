@@ -14,6 +14,19 @@ cfg_if::cfg_if! {
     }
 }
 
+/// Physical address of the embedded payload image (payload mode), or 0.
+/// Consumed by the RDSM CoVE payload loading.
+#[cfg(feature = "rdsm")]
+pub(crate) fn image_address() -> usize {
+    cfg_if::cfg_if! {
+        if #[cfg(feature = "payload")] {
+            payload::image_address()
+        } else {
+            0
+        }
+    }
+}
+
 use core::fmt;
 
 use riscv::register::{self, Permission};

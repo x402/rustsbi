@@ -227,7 +227,13 @@ impl BuildSpec {
         match &self.mode {
             BuildMode::Dynamic => {}
             BuildMode::Jump => features.push("jump".to_string()),
-            BuildMode::Payload { .. } => features.push("payload".to_string()),
+            // Payload mode also links the RDSM firmware layer from the
+            // sibling cove-sw repository (CoVE payload loading, TEECALL
+            // forwarding and domain switching).
+            BuildMode::Payload { .. } => {
+                features.push("payload".to_string());
+                features.push("rdsm".to_string());
+            }
         }
         features
     }

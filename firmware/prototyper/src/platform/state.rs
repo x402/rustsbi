@@ -56,6 +56,19 @@ pub(crate) fn board_info() -> &'static BoardInfo {
     &platform().board
 }
 
+/// Returns the largest RAM range as `(start, end)`. Used by the RDSM to
+/// size MPT coverage; returns `None` before platform publication.
+#[cfg(feature = "rdsm")]
+pub(crate) fn main_ram_range() -> Option<(usize, usize)> {
+    let board = &PLATFORM.get()?.board;
+    board
+        .ram_ranges
+        .iter()
+        .copied()
+        .max_by_key(|range| range.end().as_usize() - range.start().as_usize())
+        .map(|range| (range.start().as_usize(), range.end().as_usize()))
+}
+
 pub(crate) fn supervisor_memory() -> &'static SupervisorMemory {
     &platform().supervisor_memory
 }

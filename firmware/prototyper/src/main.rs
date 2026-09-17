@@ -58,6 +58,9 @@ fn boot_hart(mut boot: BootInfo) {
     detect_hart_features();
     log_hart_capabilities(hart_id);
 
+    sbi::rdsm::set_fdt_address(next_stage_fdt_address);
+    sbi::rdsm::init(hart_id);
+
     let mut next_stage = boot.next_stage();
     check_next_stage_privilege(next_stage.next_mode);
 

@@ -14,6 +14,7 @@ pub(crate) mod hsm;
 pub mod ipi;
 pub mod mpxy;
 pub mod pmu;
+pub(crate) mod rdsm;
 pub mod reset;
 pub mod rfence;
 pub mod sta;
@@ -72,6 +73,14 @@ pub struct SbiDispatcher {
     pub(crate) andes: Option<allwinner_v821::Andes>,
     #[rustsbi(extension(eid = crate::riscv::allwinner_v821::AWBASE_EXTENSION))]
     pub(crate) awbase: Option<allwinner_v821::Awbase>,
+    #[rustsbi(extension(eid = crate::sbi::rdsm::EID_RDSM))]
+    pub(crate) rdsm_domain: Option<rdsm::RdsmDomain>,
+    #[rustsbi(extension(eid = crate::sbi::rdsm::EID_SUPD))]
+    pub(crate) supd_domain: Option<rdsm::SupdDomain>,
+    #[rustsbi(extension(eid = crate::sbi::rdsm::EID_COVH))]
+    pub(crate) covh_domain: Option<rdsm::CovhDomain>,
+    #[rustsbi(extension(eid = crate::sbi::rdsm::EID_COVI))]
+    pub(crate) covi_domain: Option<rdsm::CoviDomain>,
 }
 
 /// The SBI extension set, owned by the sbi layer.

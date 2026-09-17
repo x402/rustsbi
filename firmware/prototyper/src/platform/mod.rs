@@ -20,3 +20,5 @@ pub(crate) use info::{BoardInfo, ImsicInfo};
 pub(crate) use state::{
     board_info, console_device, enabled_harts, hart_privilege_checked, mark_hart_privilege_checked,
 };
+#[cfg(feature = "rdsm")]
+pub(crate) use state::main_ram_range;

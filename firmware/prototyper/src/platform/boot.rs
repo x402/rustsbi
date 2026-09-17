@@ -226,6 +226,10 @@ fn publish_sbi_dispatcher(
         mpxy,
         andes: sbi::allwinner_v821::Andes::new(supervisor_memory),
         awbase: sbi::allwinner_v821::Awbase::new(),
+        rdsm_domain: sbi::rdsm::RdsmDomain::new(),
+        supd_domain: sbi::rdsm::SupdDomain::new(),
+        covh_domain: sbi::rdsm::CovhDomain::new(),
+        covi_domain: sbi::rdsm::CoviDomain::new(),
     });
 }
 

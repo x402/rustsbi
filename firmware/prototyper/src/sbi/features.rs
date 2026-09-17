@@ -48,11 +48,14 @@ pub enum Extension {
     Hypervisor = 1,
     Smaia = 2,
     Svpbmt = 3,
+    Smsdid = 4,
+    Smmpt = 5,
+    Smsdia = 6,
     // Remember to increment `Extension::COUNT` while implementing new extensions.
 }
 
 impl Extension {
-    pub const COUNT: usize = 4;
+    pub const COUNT: usize = 7;
 
     pub const fn as_str(&self) -> &'static str {
         match self {
@@ -60,6 +63,9 @@ impl Extension {
             Self::Hypervisor => "h",
             Self::Smaia => "smaia", // TODO verify with DTB standard
             Self::Svpbmt => "svpbmt",
+            Self::Smsdid => "smsdid",
+            Self::Smmpt => "smmpt",
+            Self::Smsdia => "smsdia",
         }
     }
 
@@ -69,7 +75,7 @@ impl Extension {
     }
 
     pub fn iter() -> impl Iterator<Item = Self> {
-        [Self::Sstc, Self::Hypervisor, Self::Smaia, Self::Svpbmt].into_iter()
+        [Self::Sstc, Self::Hypervisor, Self::Smaia, Self::Svpbmt, Self::Smsdid, Self::Smmpt, Self::Smsdia].into_iter()
     }
 }
 
