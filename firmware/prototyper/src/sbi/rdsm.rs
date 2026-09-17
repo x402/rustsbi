@@ -118,7 +118,14 @@ impl RdsmDomain {
 
 impl Extension for RdsmDomain {
     fn probe(&self) -> usize {
-        0
+        #[cfg(feature = "rdsm")]
+        {
+            return rdsm_policy::rdsm_probe();
+        }
+        #[cfg(not(feature = "rdsm"))]
+        {
+            0
+        }
     }
 
     fn handle(&self, function: usize, args: [usize; 6]) -> SbiRet {
