@@ -16,6 +16,7 @@ mod allwinner_v861;
 #[cfg(any(target_arch = "riscv32", target_arch = "riscv64"))]
 pub mod boot;
 pub mod cfg;
+pub mod context;
 #[cfg(any(target_arch = "riscv32", target_arch = "riscv64"))]
 pub mod csr;
 mod device_tree;

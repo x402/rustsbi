@@ -14,9 +14,11 @@ pub(crate) mod frame;
 pub(crate) mod init;
 mod recovery;
 mod redirect;
+mod transfer;
 
 pub use init::{InitError, has_sstc, init, misaligned_delegated, set_misaligned_delegation};
 pub use recovery::{read_csr_guarded, swap_csr_guarded, write_csr_guarded};
+pub use transfer::stage_retentive_transfer;
 
 use core::fmt;
 

@@ -15,6 +15,7 @@ use super::frame::TrapFrame;
 use super::redirect::redirect_trap;
 use super::{emulate, init};
 use crate::boot::NextStage;
+use crate::context;
 use crate::hart::{self, HartEvent};
 
 /// Machine interrupt cause codes.
@@ -126,23 +127,65 @@ fn sbi_ecall(frame: &mut TrapFrame) {
     // instruction is exactly 4 bytes.
     unsafe { mepc::write(mepc::read() + 4) };
 
-    // A successful non-retentive resume stages the lower-privilege handoff
-    // through Runtime's protocol-free marker. The SBI adapter has already
-    // validated the operation; dispatch only performs the machine ceremony.
-    if let Some(hart::ControlTransfer::NonRetentiveResume(next_stage)) =
-        hart::take_control_transfer()
-    {
-        // SAFETY: M-mode writes to this hart's S-mode and trap CSRs for the
-        // staged resume.
-        unsafe {
-            stage_smode_trap_state();
-            mstatus::set_mpp(mstatus::MPP::Supervisor);
-            mepc::write(next_stage.start_addr);
+    // A successful resume stages its control transfer through Runtime's
+    // protocol-free marker. The SBI adapter has already validated the
+    // operation; dispatch only performs the machine ceremony.
+    match hart::take_control_transfer() {
+        Some(hart::ControlTransfer::NonRetentiveResume(next_stage)) => {
+            // SAFETY: M-mode writes to this hart's S-mode and trap CSRs for
+            // the staged resume.
+            unsafe {
+                stage_smode_trap_state();
+                mstatus::set_mpp(mstatus::MPP::Supervisor);
+                mepc::write(next_stage.start_addr);
+            }
+            frame.x.fill(0);
+            riscv::asm::fence_i();
+            frame.write_x(10, hart::current_hart().as_usize());
+            frame.write_x(11, next_stage.opaque);
+            // The fresh stage is not a tracked execution context.
+            hart::set_active_context(None);
         }
-        frame.x.fill(0);
-        riscv::asm::fence_i();
-        frame.write_x(10, hart::current_hart().as_usize());
-        frame.write_x(11, next_stage.opaque);
+        Some(hart::ControlTransfer::Retentive {
+            suspend_into,
+            resume_from,
+        }) => {
+            // The advance above has already committed the outgoing context's
+            // resume PC. The whole switch is data movement performed by
+            // Runtime alone; no client code runs inside this sequence.
+            let resume_pc = mepc::read();
+            // Read the outgoing translation state before the entry reset
+            // clears it, so it is preserved in the snapshot.
+            let outgoing = context::ProtectionState::current();
+            // SAFETY: M-mode writes to this hart's S-mode and trap CSRs for
+            // the staged transfer.
+            unsafe {
+                stage_smode_trap_state();
+                mstatus::set_mpp(mstatus::MPP::Supervisor);
+            }
+            // Save the outgoing execution as data, then install the
+            // declared incoming state.
+            suspend_into.save_outgoing(&frame.x, resume_pc, outgoing);
+            let incoming = resume_from.protection();
+            incoming.install();
+            // The incoming context may declare a different address space
+            // (including a reused ASID); fence the local TLB only when it
+            // actually differs from the outgoing one.
+            if incoming != outgoing {
+                riscv::asm::sfence_vma_all();
+            }
+            riscv::asm::fence_i();
+            // Load the incoming registers and entry PC.
+            let entry_pc = resume_from.resume_into(&mut frame.x);
+            // Commit the exchange: the suspend target now holds the
+            // outgoing snapshot, the resume source becomes active.
+            context::commit_pair(suspend_into, resume_from);
+            hart::set_active_context(Some(resume_from));
+            // SAFETY: M-mode writes to this hart's mepc for the staged
+            // transfer into the incoming context.
+            unsafe { mepc::write(entry_pc) };
+        }
+        None => {}
     }
 }
 
