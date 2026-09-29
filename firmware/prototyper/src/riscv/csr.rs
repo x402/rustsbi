@@ -3,13 +3,10 @@ use core::arch::asm;
 // Sstc: supervisor timer compare register.
 pub const CSR_STIMECMP: u16 = 0x14D;
 
-// Machine counter-enable, environment-configuration, and state-enable CSRs.
+// Machine counter-enable and environment-configuration CSRs.
 pub const CSR_MCOUNTEREN: u16 = 0x306;
 pub const CSR_MENVCFG: u16 = 0x30a;
-pub const CSR_MSTATEEN0: u16 = 0x30c;
-pub const CSR_MSTATEEN1: u16 = 0x30d;
-pub const CSR_MSTATEEN2: u16 = 0x30e;
-pub const CSR_MSTATEEN3: u16 = 0x30f;
+pub const CSR_MSECCFG: u16 = 0x747;
 
 // Machine counter inhibit and the event-selector CSR range.
 pub const CSR_MCOUNTINHIBIT: u16 = 0x320;
@@ -83,46 +80,21 @@ pub mod menvcfg {
     }
 }
 
-/// Machine state-enable register bit fields.
-pub mod mstateen {
+/// Machine security configuration register (mseccfg) bit fields.
+pub mod mseccfg {
     use core::arch::asm;
 
-    use super::{CSR_MSTATEEN0, CSR_MSTATEEN1, CSR_MSTATEEN2, CSR_MSTATEEN3};
+    /// S-mode access to the `seed` CSR (Zkr).
+    pub const SSEED: u64 = 0x1 << 9;
 
-    /// Counter delegation state.
-    pub const CTR: u64 = 1u64 << 54;
-    /// Context CSRs.
-    pub const CONTEXT: u64 = 1u64 << 57;
-    /// IMSIC state.
-    pub const IMSIC: u64 = 1u64 << 58;
-    /// AIA state.
-    pub const AIA: u64 = 1u64 << 59;
-    /// Supervisor indirect CSR select state.
-    pub const SVSLCT: u64 = 1u64 << 60;
-    /// Hypervisor environment configuration state.
-    pub const HSENVCFG: u64 = 1u64 << 62;
-    /// State-enable CSRs themselves.
-    pub const STATEN: u64 = 1u64 << 63;
-
-    fn write<const CSR: u16, const CSR_HIGH: u16>(value: u64) {
-        // SAFETY: callers probe mstateen before use. RV32 exposes bits
-        // 63:32 through mstateenNh, at the low CSR number plus 0x10.
+    /// Sets specified bits in mseccfg register.
+    pub fn set_bits(option: u64) {
+        // SAFETY: M-mode update of this hart's own mseccfg. Callers probe the
+        // CSR first; the Zkr bits live in the low 32 bits on every XLEN, so
+        // no high-half write is needed on RV32.
         unsafe {
-            asm!("csrw {csr}, {value}", csr = const CSR, value = in(reg) value as usize, options(nomem));
-            #[cfg(target_pointer_width = "32")]
-            asm!("csrw {csr}, {value}", csr = const CSR_HIGH, value = in(reg) (value >> 32) as usize, options(nomem));
+            asm!("csrs mseccfg, {}", in(reg) option as usize, options(nomem));
         }
-    }
-
-    /// Enables S-mode access to the AIA-related state groups in the
-    /// `mstateen` CSRs.
-    #[inline(always)]
-    pub fn enable_smode_aia() {
-        let stateen0 = STATEN | CONTEXT | IMSIC | AIA | SVSLCT | HSENVCFG | CTR;
-        write::<CSR_MSTATEEN0, { CSR_MSTATEEN0 + 0x10 }>(stateen0);
-        write::<CSR_MSTATEEN1, { CSR_MSTATEEN1 + 0x10 }>(STATEN);
-        write::<CSR_MSTATEEN2, { CSR_MSTATEEN2 + 0x10 }>(STATEN);
-        write::<CSR_MSTATEEN3, { CSR_MSTATEEN3 + 0x10 }>(STATEN);
     }
 }
 

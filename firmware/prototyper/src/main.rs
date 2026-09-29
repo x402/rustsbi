@@ -11,6 +11,7 @@ mod devicetree;
 mod driver;
 mod fail;
 mod firmware;
+mod heap;
 mod platform;
 mod riscv;
 mod sbi;
@@ -21,7 +22,6 @@ use crate::sbi::features::{
     check_next_stage_privilege, detect_hart_features, hart_mhpm_mask, hart_privileged_version,
 };
 use crate::sbi::hart_local;
-use crate::sbi::heap;
 use ::riscv::register::mstatus::MPP;
 use runtime::hart::HartId;
 use rustsbi_prototyper_macros::entry;
@@ -97,8 +97,10 @@ fn enable_supervisor_services() {
     if ipi::uses_imsic() {
         driver::initialize_hart_imsic(
             platform::board_info()
-                .imsic
-                .as_ref()
+                .devices
+                .interrupts
+                .imsic()
+                .map(|description| description.resource())
                 .expect("selected IMSIC has a description"),
         );
     }

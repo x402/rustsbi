@@ -5,7 +5,6 @@
 
 use spin::Once;
 
-pub(crate) mod allwinner_v821;
 pub mod console;
 pub mod cppc;
 pub mod dbtr;
@@ -20,10 +19,10 @@ pub mod rfence;
 pub mod sta;
 pub mod suspend;
 pub mod timer;
+pub(crate) mod vendor;
 
 pub mod features;
 pub mod hart_local;
-pub mod heap;
 pub mod logger;
 
 use console::SbiConsole;
@@ -69,18 +68,8 @@ pub struct SbiDispatcher {
     pub(crate) susp: Option<SbiSuspend>,
     #[rustsbi(mpxy)]
     pub(crate) mpxy: Option<SbiMpxy>,
-    #[rustsbi(extension(eid = crate::riscv::allwinner_v821::EXTENSION))]
-    pub(crate) andes: Option<allwinner_v821::Andes>,
-    #[rustsbi(extension(eid = crate::riscv::allwinner_v821::AWBASE_EXTENSION))]
-    pub(crate) awbase: Option<allwinner_v821::Awbase>,
-    #[rustsbi(extension(eid = crate::sbi::rdsm::EID_RDSM))]
-    pub(crate) rdsm_domain: Option<rdsm::RdsmDomain>,
-    #[rustsbi(extension(eid = crate::sbi::rdsm::EID_SUPD))]
-    pub(crate) supd_domain: Option<rdsm::SupdDomain>,
-    #[rustsbi(extension(eid = crate::sbi::rdsm::EID_COVH))]
-    pub(crate) covh_domain: Option<rdsm::CovhDomain>,
-    #[rustsbi(extension(eid = crate::sbi::rdsm::EID_COVI))]
-    pub(crate) covi_domain: Option<rdsm::CoviDomain>,
+    #[rustsbi(vendor)]
+    pub(crate) vendor: Option<vendor::Vendor>,
 }
 
 /// The SBI extension set, owned by the sbi layer.

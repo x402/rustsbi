@@ -16,7 +16,11 @@ mod recovery;
 mod redirect;
 mod transfer;
 
-pub use init::{InitError, has_sstc, init, misaligned_delegated, set_misaligned_delegation};
+pub use decode::ValueKind;
+pub use init::{
+    AccessDispatcher, AccessError, InitError, has_sstc, init, install_access_dispatcher,
+    misaligned_delegated, set_misaligned_delegation,
+};
 pub use recovery::{read_csr_guarded, swap_csr_guarded, write_csr_guarded};
 pub use transfer::stage_retentive_transfer;
 
@@ -43,6 +47,12 @@ pub enum Error {
     /// The trap originated from M-mode; there is no lower-privilege owner to
     /// receive a redirect. The caller should fail.
     MachineOrigin,
+}
+
+impl From<AccessError> for Error {
+    fn from(_: AccessError) -> Self {
+        Self::UnsupportedInstruction
+    }
 }
 
 impl fmt::Display for Error {

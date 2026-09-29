@@ -62,6 +62,7 @@ pub(crate) fn board_info() -> &'static BoardInfo {
 pub(crate) fn main_ram_range() -> Option<(usize, usize)> {
     let board = &PLATFORM.get()?.board;
     board
+        .memory
         .ram_ranges
         .iter()
         .copied()
@@ -81,7 +82,7 @@ pub(crate) fn console_device() -> Option<&'static Mutex<Box<dyn DbcnBackend + Se
 
 /// Returns DT-enabled harts that have passed their privilege-mode check.
 pub(crate) fn enabled_harts() -> Option<HartEnableList> {
-    let mut enabled = PLATFORM.get()?.board.enabled_harts;
+    let mut enabled = PLATFORM.get()?.board.harts.enabled;
     for (enabled, checked) in enabled.iter_mut().zip(&HART_PRIVILEGE_CHECKED) {
         *enabled &= checked.load(Ordering::Acquire);
     }

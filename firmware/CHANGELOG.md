@@ -8,7 +8,11 @@ All notable changes to this project will be documented in this file. See [conven
 
 ### Added
 
-- Register V821 custom SBI extensions through derive and publish the dispatcher directly.
+- Release V821 boot0 ISP SRAM after switching to the firmware DRAM stack.
+- Recognize the K3 AP SoC capability on RV64 from an enabled `spacemit,k3` device-tree root.
+  Document the compatible and all K3 cores' RV64 architecture with pinned source and datasheet references.
+- Group V821 vendor SBI extensions under `sbi::vendor::allwinner::v821` and
+  publish them through the dispatcher's single optional vendor field.
 - Add Avaota F1 build settings with target JSON and key loader DTB nodes documented inline.
 - Support V821 AWBASE USB enable through the DTB-described DMA word-address bypass register.
 - Support V821 Andes cache-maintenance SBI calls using the device-tree L2 cache window.
@@ -42,6 +46,10 @@ All notable changes to this project will be documented in this file. See [conven
 - Add SpacemiT K1 SoC platform support for RustSBI Prototyper, including OrangePi RV2 board configuration.
 
 ### Modified
+- Move Prototyper heap storage and the global allocation boundary into Runtime,
+  keep first-fit placement in safe policy code, and remove the buddy dependency.
+- Reduce repeated device-tree scans during hart, ISA, interrupt-controller, console, and PMU discovery.
+- Initialize Smstateen before supervisor handoff, expose supported S-mode state, and clear lower-level state-enable registers.
 - Resolve firmware Clippy warnings and use a named Runtime IPI error type.
 - Split PMP logging ranges to avoid equal-operand comparisons in macro expansion.
 - Move the IPI backend interface into a directory module.

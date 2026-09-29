@@ -14,6 +14,7 @@ use riscv::register::medeleg;
 use rustsbi::RustSBI;
 use spin::Once;
 
+use super::ValueKind;
 use super::entry::trap_entry;
 use crate::cfg::NUM_HART_MAX;
 use crate::hart::{HartId, current_hart};
@@ -170,6 +171,53 @@ where
         ))
     };
     Ok(())
+}
+
+/// An error returned when a platform dispatcher declines an access.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct AccessError;
+
+/// A platform service that completes S-mode load/store accesses the hardware
+/// refused.
+///
+/// Runtime keeps the instruction semantics, fetching and decoding the trapped
+/// instruction, extending the loaded value, and advancing `mepc`. The service
+/// only performs the access itself, receiving the `mtval`-reported faulting
+/// address, the [`ValueKind`] (width and signedness), and the value for stores.
+///
+/// Declining (`Err`) leaves the original fault to be redirected to
+/// the supervisor unchanged.
+pub trait AccessDispatcher: Sync {
+    /// Completes a load of `kind` at `addr`, returning the raw unsigned value,
+    /// or `Err` if the access cannot be completed.
+    fn load(&self, addr: usize, kind: ValueKind) -> Result<usize, AccessError>;
+
+    /// Completes a store of the `kind.width()` low-order bytes of `value` at
+    /// `addr`, or returns `Err` if the access cannot be completed.
+    fn store(&self, addr: usize, kind: ValueKind, value: usize) -> Result<(), AccessError>;
+}
+
+/// The erased access-fault service: one global dispatcher shared by every
+/// hart, published once during boot.
+static ACCESS_DISPATCHER: Once<&'static dyn AccessDispatcher> = Once::new();
+
+/// Publishes the platform's access-fault dispatcher once during boot.
+///
+/// This uses the same `Once`-backed erased-reference pattern as the SBI
+/// policy stored by [`init`] — though that policy is per-hart while this
+/// dispatcher is global — and trap dispatch reads it directly. Later calls
+/// are ignored.
+pub fn install_access_dispatcher<D>(dispatcher: &'static D)
+where
+    D: AccessDispatcher + 'static,
+{
+    ACCESS_DISPATCHER.call_once(|| dispatcher as &dyn AccessDispatcher);
+}
+
+/// Returns the published access-fault dispatcher, or `None` when the
+/// platform installed none.
+pub(crate) fn access_dispatcher() -> Option<&'static dyn AccessDispatcher> {
+    ACCESS_DISPATCHER.get().copied()
 }
 
 /// Misaligned load/store exception `medeleg` bits (causes 4 and 6).

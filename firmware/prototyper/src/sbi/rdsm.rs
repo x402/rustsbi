@@ -14,7 +14,7 @@
 //! TSM sees the original `a7`, and a staged transfer is consumed by the
 //! Runtime's ceremony on the same hart's ecall return path.
 
-use runtime::rustsbi::{Extension, SbiRet};
+use runtime::rustsbi::{Extension, SbiRet, VendorSBI};
 
 /// Private RDSM extension: MPT programming and the TEECALL/TEERET machinery.
 pub(crate) const EID_RDSM: usize = 0x5244_534D;
@@ -106,14 +106,35 @@ pub(crate) fn init(hart_id: usize) {
     let _ = hart_id;
 }
 
-/// The private RDSM extension.
-pub(crate) struct RdsmDomain;
+/// The four CoVE extensions bound to their EIDs for the vendor dispatch
+/// enum. Without the feature every field stays `None`, so probing reports
+/// the extensions as absent and feature-off dispatch keeps upstream
+/// behavior bit for bit.
+#[derive(VendorSBI)]
+#[rustsbi(crate = runtime::rustsbi)]
+pub(crate) struct RdsmExtensions {
+    #[rustsbi(extension(eid = EID_RDSM))]
+    rdsm: Option<RdsmDomain>,
+    #[rustsbi(extension(eid = EID_SUPD))]
+    supd: Option<SupdDomain>,
+    #[rustsbi(extension(eid = EID_COVH))]
+    covh: Option<CovhDomain>,
+    #[rustsbi(extension(eid = EID_COVI))]
+    covi: Option<CoviDomain>,
+}
 
-impl RdsmDomain {
+impl RdsmExtensions {
+    /// `None` without the `rdsm` feature: the vendor selector then falls
+    /// back to platform-specific extensions.
     pub(crate) fn new() -> Option<Self> {
         #[cfg(feature = "rdsm")]
         {
-            Some(Self)
+            Some(Self {
+                rdsm: Some(RdsmDomain),
+                supd: Some(SupdDomain),
+                covh: Some(CovhDomain),
+                covi: Some(CoviDomain),
+            })
         }
         #[cfg(not(feature = "rdsm"))]
         {
@@ -121,6 +142,9 @@ impl RdsmDomain {
         }
     }
 }
+
+/// The private RDSM extension.
+pub(crate) struct RdsmDomain;
 
 impl Extension for RdsmDomain {
     fn probe(&self) -> usize {
@@ -150,19 +174,6 @@ impl Extension for RdsmDomain {
 /// The SUPD discovery extension.
 pub(crate) struct SupdDomain;
 
-impl SupdDomain {
-    pub(crate) fn new() -> Option<Self> {
-        #[cfg(feature = "rdsm")]
-        {
-            Some(Self)
-        }
-        #[cfg(not(feature = "rdsm"))]
-        {
-            None
-        }
-    }
-}
-
 impl Extension for SupdDomain {
     fn probe(&self) -> usize {
         #[cfg(feature = "rdsm")]
@@ -191,19 +202,6 @@ impl Extension for SupdDomain {
 /// The COVH host→TSM forwarding extension.
 pub(crate) struct CovhDomain;
 
-impl CovhDomain {
-    pub(crate) fn new() -> Option<Self> {
-        #[cfg(feature = "rdsm")]
-        {
-            Some(Self)
-        }
-        #[cfg(not(feature = "rdsm"))]
-        {
-            None
-        }
-    }
-}
-
 impl Extension for CovhDomain {
     fn probe(&self) -> usize {
         #[cfg(feature = "rdsm")]
@@ -231,19 +229,6 @@ impl Extension for CovhDomain {
 
 /// The COVI interrupt virtualization extension.
 pub(crate) struct CoviDomain;
-
-impl CoviDomain {
-    pub(crate) fn new() -> Option<Self> {
-        #[cfg(feature = "rdsm")]
-        {
-            Some(Self)
-        }
-        #[cfg(not(feature = "rdsm"))]
-        {
-            None
-        }
-    }
-}
 
 impl Extension for CoviDomain {
     fn probe(&self) -> usize {
