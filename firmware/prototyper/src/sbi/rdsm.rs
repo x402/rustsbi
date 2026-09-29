@@ -9,10 +9,10 @@
 //! feature is on.
 //!
 //! Domain switching (TEERET, host→TSM TEECALL) is sequenced end-to-end in
-//! `rdsm-policy::switch` but cannot be reached from custom extension
-//! dispatch yet: it needs Runtime trap-frame access, proposed upstream as
-//! rustsbi#286. The live paths reject with their private error codes until
-//! that lands.
+//! `rdsm-policy::switch` on top of the Runtime's declarative execution
+//! contexts: the COVH/COVI handlers forward their own extension ID so the
+//! TSM sees the original `a7`, and a staged transfer is consumed by the
+//! Runtime's ceremony on the same hart's ecall return path.
 
 use runtime::rustsbi::{Extension, SbiRet};
 
@@ -219,7 +219,7 @@ impl Extension for CovhDomain {
     fn handle(&self, function: usize, args: [usize; 6]) -> SbiRet {
         #[cfg(feature = "rdsm")]
         {
-            return rdsm_policy::handle_teecall(function, args);
+            return rdsm_policy::handle_teecall(EID_COVH, function, args);
         }
         #[cfg(not(feature = "rdsm"))]
         {
@@ -260,7 +260,7 @@ impl Extension for CoviDomain {
     fn handle(&self, function: usize, args: [usize; 6]) -> SbiRet {
         #[cfg(feature = "rdsm")]
         {
-            return rdsm_policy::handle_teecall(function, args);
+            return rdsm_policy::handle_teecall(EID_COVI, function, args);
         }
         #[cfg(not(feature = "rdsm"))]
         {
