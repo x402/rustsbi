@@ -95,6 +95,12 @@ pub(crate) fn init(hart_id: usize) {
             ),
         };
         rdsm_policy::init(env);
+        // Claim the Smmtt MSDEI on Runtime's behalf (acknowledged by
+        // clearing the pending SID bits in `msideie`); unclaimed causes
+        // keep Runtime's fail-stop default. `msideie` stays 0, so MSDEI
+        // never fires until a domain enables it.
+        runtime::machine_irq::install(Some(&rdsm_policy::RDSM_MACHINE_IRQ));
+        log::info!("RDSM: machine-interrupt policy installed (MSDEI claim path armed)");
     }
     #[cfg(not(feature = "rdsm"))]
     let _ = hart_id;

@@ -530,6 +530,7 @@ dependencies = [
  "rdsm-mech",
  "riscv",
  "riscv-cove",
+ "rustsbi-firmware-runtime",
  "sbi-spec",
  "spin",
 ]
