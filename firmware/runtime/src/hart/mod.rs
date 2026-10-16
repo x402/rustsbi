@@ -2,18 +2,23 @@
 //!
 //! SBI HSM policy and ABI translation belong to the firmware.
 
+#[cfg(any(target_arch = "riscv32", target_arch = "riscv64"))]
 mod lifecycle;
 mod local;
 mod set;
 mod topology;
+#[cfg(any(target_arch = "riscv32", target_arch = "riscv64"))]
 mod wakeup;
 
+#[cfg(any(target_arch = "riscv32", target_arch = "riscv64"))]
 pub use wakeup::{HartWake, install_wakeup};
 
+#[cfg(any(target_arch = "riscv32", target_arch = "riscv64"))]
 pub(crate) use lifecycle::{
     ControlTransfer, HartEvent, current_cell, current_hart, set_active_context,
     take_control_transfer, take_local_event,
 };
+#[cfg(any(target_arch = "riscv32", target_arch = "riscv64"))]
 pub use lifecycle::{
     HartState, ResumeError, ResumeTicket, StageError, StartError, StartOutcome, StopError,
     SuspendError, begin_nonretentive_resume, can_receive_ipi, resume_current_retentive,

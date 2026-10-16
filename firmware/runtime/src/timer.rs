@@ -34,16 +34,21 @@ pub(crate) fn read_time(word: TimeWord) -> Option<usize> {
     if direct.is_some() {
         return direct;
     }
+    #[cfg(any(target_arch = "riscv32", target_arch = "riscv64"))]
     // SAFETY: Internal callers run in Runtime after trap entry is installed.
     // Time reads have no side effects; recovery handles an unavailable CSR.
-    let hardware = unsafe {
+    let hardware: Option<usize> = unsafe {
         match word {
             TimeWord::Low => crate::csr::read::<user::Time>(),
             #[cfg(target_pointer_width = "32")]
             TimeWord::High => crate::csr::read::<user::TimeHigh>(),
         }
-    };
-    hardware.ok().map(usize::from).or_else(|| {
+    }
+    .ok()
+    .map(usize::from);
+    #[cfg(not(any(target_arch = "riscv32", target_arch = "riscv64")))]
+    let hardware: Option<usize> = None;
+    hardware.or_else(|| {
         let time = timer?.read_time()?;
         Some(match word {
             TimeWord::Low => time as usize,
@@ -56,6 +61,7 @@ pub(crate) fn read_time(word: TimeWord) -> Option<usize> {
 /// Returns whether the current hart permits Sstc timer-compare reads.
 ///
 /// The result is cached for this hart after Runtime startup installs trap entry.
+#[cfg(any(target_arch = "riscv32", target_arch = "riscv64"))]
 pub fn has_sstc() -> bool {
     let capabilities = SSTC.call_once(|| crate::hart::HartId::all().map(|_| Once::new()).collect());
     *capabilities[crate::hart::current_hart().index()].call_once(|| {
@@ -63,6 +69,11 @@ pub fn has_sstc() -> bool {
         // have no side effects and execute in this hart's M-mode context.
         unsafe { crate::csr::read::<supervisor::TimerCompare>() }.is_ok()
     })
+}
+
+#[cfg(not(any(target_arch = "riscv32", target_arch = "riscv64")))]
+pub fn has_sstc() -> bool {
+    false
 }
 
 /// The platform timer device used by the machine timer transport and the
