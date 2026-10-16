@@ -1,6 +1,5 @@
-#![forbid(unsafe_code)]
-
 use ::riscv::register::mstatus::MPP;
+use csr::machine;
 use riscv::register::misa;
 use runtime::FdtNode;
 use seq_macro::seq;
@@ -45,14 +44,16 @@ pub enum Extension {
     Smaia = 2,
     Svpbmt = 3,
     Zkr = 4,
-    Smsdid = 5,
-    Smmpt = 6,
-    Smsdia = 7,
+    Zicbom = 5,
+    Zicboz = 6,
+    Smsdid = 7,
+    Smmpt = 8,
+    Smsdia = 9,
     // Remember to increment `Extension::COUNT` while implementing new extensions.
 }
 
 impl Extension {
-    pub const COUNT: usize = 8;
+    pub const COUNT: usize = 10;
 
     pub const fn as_str(&self) -> &'static str {
         match self {
@@ -61,6 +62,8 @@ impl Extension {
             Self::Smaia => "smaia", // TODO verify with DTB standard
             Self::Svpbmt => "svpbmt",
             Self::Zkr => "zkr",
+            Self::Zicbom => "zicbom",
+            Self::Zicboz => "zicboz",
             Self::Smsdid => "smsdid",
             Self::Smmpt => "smmpt",
             Self::Smsdia => "smsdia",
@@ -79,6 +82,8 @@ impl Extension {
             Self::Smaia,
             Self::Svpbmt,
             Self::Zkr,
+            Self::Zicbom,
+            Self::Zicboz,
             Self::Smsdid,
             Self::Smmpt,
             Self::Smsdia,
@@ -152,12 +157,14 @@ pub fn detect_extensions(_hart_id: usize, _cpu: FdtNode<'_, '_>) {}
 
 fn detect_privileged_version() {
     let mut privileged_version = PrivilegedVersion::Unknown;
-    {
-        if has_csr::<CSR_MCOUNTEREN>() {
+    // SAFETY: Feature discovery runs in M-mode after Runtime entry setup.
+    // These CSR reads have no side effects.
+    unsafe {
+        if has_csr::<machine::CounterEnable>() {
             privileged_version = PrivilegedVersion::Version1_10;
-            if has_csr::<CSR_MCOUNTINHIBIT>() {
+            if has_csr::<machine::CounterInhibit>() {
                 privileged_version = PrivilegedVersion::Version1_11;
-                if has_csr::<CSR_MENVCFG>() {
+                if has_csr::<machine::EnvironmentConfiguration>() {
                     privileged_version = PrivilegedVersion::Version1_12;
                 }
             }
@@ -170,9 +177,7 @@ fn detect_privileged_version() {
 
 /// Detects Sstc even when it is omitted from the device tree.
 fn detect_sstc() {
-    let sstc = hart_privileged_version(HartId::current().expect("BUG: invalid hart ID").as_usize())
-        >= PrivilegedVersion::Version1_12
-        && has_csr::<CSR_STIMECMP>();
+    let sstc = runtime::timer::has_sstc();
     with_current(|local| {
         local.with_features_mut(|features| features.extensions[Extension::Sstc.index()] = sstc)
     });
@@ -184,15 +189,14 @@ fn detect_mhpm_counters() {
     let mut mhpm_mask: u32 = 0b111;
 
     macro_rules! m_probe_mhpm_csr {
-        ($csr_num:expr, $value:expr) => {
-            probe_mhpm_csr::<$csr_num>($value)
+        ($index:expr, $value:expr) => {
+            // SAFETY: Startup owns these counters before the PMU is published.
+            unsafe { probe_mhpm_csr::<$index>($value) }
         };
     }
 
-    // mhpmcounter3:  0xb03
-    // mhpmcounter31: 0xb1f
-    seq!(csr_num in 0xb03..=0xb1f{
-        m_probe_mhpm_csr!(csr_num, &mut mhpm_mask);
+    seq!(index in 3..=31{
+        m_probe_mhpm_csr!(index, &mut mhpm_mask);
     });
 
     with_current(|local| {
@@ -266,27 +270,36 @@ pub fn check_next_stage_privilege(next_mode: MPP) {
 /// Configures the per-hart S-mode environment CSRs for supervisor
 /// hand-off (counter inhibits and environment features).
 ///
-/// Delegation, counter access, and the trap vector itself are Runtime
-/// mechanism and are configured by `runtime::trap::init`.
+/// Runtime boot owns delegation, counter access and trap-vector setup.
 pub fn configure_hart_environment() {
     let hart_id = HartId::current()
         .expect("BUG: current hart exceeds Runtime capacity")
         .as_usize();
     // Standard Sv32 and Svpbmt page tables must not use T-Head MAEE.
     if cfg!(target_pointer_width = "32") || hart_has_extension(hart_id, Extension::Svpbmt) {
-        disable_thead_maee();
+        // SAFETY: M-mode startup has installed Runtime entry, with mscratch zero,
+        // MPRV clear, and no lower-mode address space active on this hart.
+        unsafe { runtime::csr::thead::disable_maee() };
     }
     let hart_priv_version = hart_privileged_version(hart_id);
     if hart_priv_version >= PrivilegedVersion::Version1_11 {
         mcountinhibit::write_raw(!0b111usize);
     }
+    // Sstc provides STCE independently of the privileged-version heuristic.
+    // Use the same per-hart result as the SBI timer and Runtime interrupt path.
+    if hart_has_extension(hart_id, Extension::Sstc) {
+        menvcfg::set_bits(menvcfg::STCE);
+    }
     if hart_priv_version >= PrivilegedVersion::Version1_12 {
-        if hart_has_extension(hart_id, Extension::Sstc) {
-            menvcfg::set_bits(
-                menvcfg::STCE | menvcfg::CBIE_INVALIDATE | menvcfg::CBCFE | menvcfg::CBZE,
-            );
-        } else {
-            menvcfg::set_bits(menvcfg::CBIE_INVALIDATE | menvcfg::CBCFE | menvcfg::CBZE);
+        for (extension, bits) in [
+            (Extension::Zicbom, menvcfg::CBIE_INVALIDATE | menvcfg::CBCFE),
+            (Extension::Zicboz, menvcfg::CBZE),
+        ] {
+            if hart_has_extension(hart_id, extension) {
+                menvcfg::set_bits(bits);
+            } else {
+                menvcfg::clear_bits(bits);
+            }
         }
         // Follow the device tree: C907 firmware also describes its RV32
         // page-memory-type extension as Svpbmt and requires PBMTE.
@@ -294,7 +307,10 @@ pub fn configure_hart_environment() {
             menvcfg::set_bits(menvcfg::PBMTE);
         }
         // The S-mode access to the Zkr `seed` CSR is gated under `mseccfg.SSEED`.
-        if hart_has_extension(hart_id, Extension::Zkr) && has_csr::<CSR_MSECCFG>() {
+        // SAFETY: M-mode startup with Runtime entry installed; mseccfg reads have no side effects.
+        if hart_has_extension(hart_id, Extension::Zkr)
+            && unsafe { has_csr::<machine::SecurityConfiguration>() }
+        {
             mseccfg::set_bits(mseccfg::SSEED);
         }
         let enable_aia =
