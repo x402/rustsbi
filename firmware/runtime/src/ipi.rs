@@ -125,7 +125,7 @@ impl Ipi {
     }
 
     pub(crate) fn init_current(&self, irq: &LocalIrqDisabled) -> Result<()> {
-        if !crate::boot::traps_ready() {
+        if !crate::csr::traps_ready() {
             return Err(Error::NotReady);
         }
         self.clear_current(irq)

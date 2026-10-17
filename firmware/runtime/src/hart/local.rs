@@ -39,7 +39,7 @@ impl<T: Send + Sync> HartLocal<T> {
     /// Initialization takes a value rather than a callback.
     /// Duplicate publication preserves the original and drops the incoming value.
     pub(crate) fn try_init_current(&self, value: T) -> Result<&T> {
-        let hart = super::current_hart();
+        let hart = HartId::current().expect("hart-local access before topology publication");
         let slots = self
             .slots
             .call_once(|| HartId::all().map(|_| Once::new()).collect());

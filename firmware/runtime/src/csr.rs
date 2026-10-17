@@ -6,9 +6,57 @@ pub mod thead;
 pub(crate) use access::unavailable;
 pub(crate) use access::{csrr, csrrw, csrw, instruction};
 
+/// Reads one complete CSR value, recovering an illegal-instruction
+/// exception as [`crate::Error::IllegalInstruction`]. Downstream policy
+/// firmware uses it to probe registers the CSR crate does not model.
+///
+/// # Safety
+///
+/// Execute on the intended hart in a permitted privilege mode with a valid
+/// trap context, and permit the register's read effects.
+pub fn read_csr_raw<const CSR: u16>() -> Result<usize, crate::Error> {
+    instruction!("csrr {value}, {csr}", CSR, 0)
+}
+
+/// Writes one complete CSR value, recovering an illegal-instruction
+/// exception. Success does not verify WARL readback.
+///
+/// # Safety
+///
+/// Execute on the intended hart in a permitted privilege mode with a valid
+/// trap context, supply the register's write contract, and coordinate
+/// conflicting accesses.
+pub unsafe fn write_csr_raw<const CSR: u16>(value: usize) -> Result<(), crate::Error> {
+    instruction!("csrw {csr}, {value}", CSR, value).map(|_| ())
+}
+
+/// Checks the Direct trap entry installed by controlled Runtime boot on this hart.
+/// Lives here so modules outside the RISC-V-gated boot flow can query readiness;
+/// host builds have no boot flow and report not ready.
+pub(crate) fn traps_ready() -> bool {
+    #[cfg(any(target_arch = "riscv32", target_arch = "riscv64"))]
+    {
+        let vector = csr::machine::TrapVector::read();
+        let base = usize::from(vector.read::<csr::machine::BASE>().address());
+        let entry_matches = base == crate::trap::entry::trap_entry as *const () as usize
+            || base == crate::trap::entry::trap_entry_hypervisor as *const () as usize;
+        #[cfg(target_pointer_width = "32")]
+        let entry_matches =
+            entry_matches || base == crate::trap::entry::trap_entry_high as *const () as usize;
+        vector.read::<csr::machine::MODE>() == csr::values::vector::VectorMode::Direct
+            && entry_matches
+            && csr::machine::Status::read().read::<csr::machine::MPRV>()
+                == csr::machine::AccessPrivilege::Current
+    }
+    #[cfg(not(any(target_arch = "riscv32", target_arch = "riscv64")))]
+    {
+        false
+    }
+}
+
 /// Enables supervisor access to seed when the security CSR is available.
 pub fn enable_supervisor_seed() {
-    if !crate::boot::traps_ready() {
+    if !traps_ready() {
         return;
     }
     if csrr!(csr::machine::SecurityConfiguration).is_ok() {

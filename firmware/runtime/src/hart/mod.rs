@@ -4,10 +4,12 @@
 
 use crate::Result;
 mod features;
+#[cfg(any(target_arch = "riscv32", target_arch = "riscv64"))]
 mod lifecycle;
 mod local;
 mod set;
 mod topology;
+#[cfg(any(target_arch = "riscv32", target_arch = "riscv64"))]
 mod wakeup;
 
 pub use features::{
@@ -15,12 +17,15 @@ pub use features::{
     supports_privilege,
 };
 
+#[cfg(any(target_arch = "riscv32", target_arch = "riscv64"))]
 pub use wakeup::{HartWake, install_wakeup};
 
+#[cfg(any(target_arch = "riscv32", target_arch = "riscv64"))]
 pub(crate) use lifecycle::{
     ControlTransfer, HartEvent, current_cell, current_hart, set_active_context,
     take_control_transfer, take_local_event,
 };
+#[cfg(any(target_arch = "riscv32", target_arch = "riscv64"))]
 pub use lifecycle::{
     HartState, ResumeTicket, StartOutcome, begin_nonretentive_resume, can_receive_ipi,
     resume_current_retentive, stage_boot_handoff, start, status, stop_current, suspend_current,

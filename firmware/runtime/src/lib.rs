@@ -10,9 +10,11 @@
 
 extern crate alloc;
 
+#[cfg(any(target_arch = "riscv32", target_arch = "riscv64"))]
 pub mod boot;
 pub mod context;
 mod csr;
+#[cfg(any(target_arch = "riscv32", target_arch = "riscv64"))]
 pub mod debug;
 mod device_tree;
 mod error;
@@ -28,9 +30,14 @@ mod recovery;
 pub mod soc;
 mod spacemit_k1;
 mod sunxi_rtc_v203;
+#[cfg(any(target_arch = "riscv32", target_arch = "riscv64"))]
 pub mod timer;
+#[cfg(any(target_arch = "riscv32", target_arch = "riscv64"))]
 pub mod trap;
 
+/// Downstream policy firmware probes substrate registers the CSR crate does
+/// not model (Smmtt and vendor state) through these fallible raw accesses.
+pub use csr::{read_csr_raw, write_csr_raw};
 pub use error::{Error, Result};
 
 pub use device_tree::{DeviceTreeHandoff, PlatformDescription, PlatformView, node_is_enabled};

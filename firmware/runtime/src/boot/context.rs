@@ -7,7 +7,7 @@ use csr::{
     values::{
         counter::CounterSet,
         trap::{Exception, ExceptionSet, InterruptSet},
-        vector::{TargetVectorMode, VectorBase, VectorMode},
+        vector::{TargetVectorMode, VectorBase},
     },
 };
 
@@ -47,19 +47,6 @@ pub unsafe extern "C" fn prepare_traps() {
             install(entry::trap_entry_hypervisor);
         }
     }
-}
-
-/// Checks the Direct trap entry installed by controlled Runtime boot on this hart.
-pub(crate) fn traps_ready() -> bool {
-    let vector = machine::TrapVector::read();
-    let base = usize::from(vector.read::<machine::BASE>().address());
-    let entry_matches = base == entry::trap_entry as *const () as usize
-        || base == entry::trap_entry_hypervisor as *const () as usize;
-    #[cfg(target_pointer_width = "32")]
-    let entry_matches = entry_matches || base == entry::trap_entry_high as *const () as usize;
-    vector.read::<machine::MODE>() == VectorMode::Direct
-        && entry_matches
-        && machine::Status::read().read::<machine::MPRV>() == machine::AccessPrivilege::Current
 }
 
 /// Installs a machine trap vector for the current hart.

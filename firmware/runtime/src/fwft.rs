@@ -9,7 +9,7 @@ use csr::{machine, values::trap::Exception};
 
 /// Sets one supported firmware feature on the current hart.
 pub fn set(feature_id: u32, value: usize) -> Result<()> {
-    if !crate::boot::traps_ready() {
+    if !crate::csr::traps_ready() {
         return Err(Error::NotReady);
     }
     crate::irq::with_local_disabled(|_| set_feature(feature_id, value))
@@ -18,7 +18,7 @@ pub fn set(feature_id: u32, value: usize) -> Result<()> {
 /// Reads one supported firmware feature on the current hart.
 /// WARL probes restore the original configuration when access succeeds.
 pub fn get(feature_id: u32) -> Result<usize> {
-    if !crate::boot::traps_ready() {
+    if !crate::csr::traps_ready() {
         return Err(Error::NotReady);
     }
     if feature_id as usize == feature_type::MISALIGNED_EXC_DELEG {

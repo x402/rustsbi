@@ -35,7 +35,7 @@ pub enum PrivilegedVersion {
 
 /// Detects the current hart's version after Runtime trap installation.
 pub fn detect_privileged_version() -> PrivilegedVersion {
-    if !crate::boot::traps_ready() {
+    if !crate::csr::traps_ready() {
         return PrivilegedVersion::Unknown;
     }
     if csrr!(machine::CounterEnable).is_err() {

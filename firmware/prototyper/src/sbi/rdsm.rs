@@ -255,71 +255,7 @@ impl Extension for CoviDomain {
     }
 }
 
-/// Raw register views for the substrate CSRs the probe may touch. The
-/// Smmtt/Smkdn registers carry no typed fields in the CSR crate, so the
-/// probe passes complete values through.
-#[cfg(feature = "rdsm")]
-struct Mstateen0;
-#[cfg(feature = "rdsm")]
-struct Mmpt;
-#[cfg(feature = "rdsm")]
-struct Msdcfg;
-
-#[cfg(feature = "rdsm")]
-impl csr::Readable for Mstateen0 {
-    const NUMBER: u16 = CSR_MSTATEEN0;
-    type Value = usize;
-    fn decode(bits: usize) -> usize {
-        bits
-    }
-}
-
-#[cfg(feature = "rdsm")]
-impl csr::Readable for Mmpt {
-    const NUMBER: u16 = CSR_MMPT;
-    type Value = usize;
-    fn decode(bits: usize) -> usize {
-        bits
-    }
-}
-
-#[cfg(feature = "rdsm")]
-impl csr::Readable for Msdcfg {
-    const NUMBER: u16 = CSR_MSDCFG;
-    type Value = usize;
-    fn decode(bits: usize) -> usize {
-        bits
-    }
-}
-
-#[cfg(feature = "rdsm")]
-impl csr::Writeable for Mstateen0 {
-    const NUMBER: u16 = CSR_MSTATEEN0;
-    type Value = usize;
-    fn encode(value: usize) -> usize {
-        value
-    }
-}
-
-#[cfg(feature = "rdsm")]
-impl csr::Writeable for Mmpt {
-    const NUMBER: u16 = CSR_MMPT;
-    type Value = usize;
-    fn encode(value: usize) -> usize {
-        value
-    }
-}
-
-#[cfg(feature = "rdsm")]
-impl csr::Writeable for Msdcfg {
-    const NUMBER: u16 = CSR_MSDCFG;
-    type Value = usize;
-    fn encode(value: usize) -> usize {
-        value
-    }
-}
-
-/// Trap-safe CSR probe built on the Runtime's fallible CSR primitives: an
+/// Trap-safe CSR probe built on the Runtime's fallible raw CSR accesses: an
 /// access that traps is recovered and reported as unimplemented instead of
 /// faulting the firmware.
 #[cfg(feature = "rdsm")]
@@ -329,13 +265,9 @@ struct GuardedCsrProbe;
 impl rdsm_policy::rdsm::probe::TrapSafeCsr for GuardedCsrProbe {
     fn read_csr(&self, csr_addr: u16) -> Option<usize> {
         match csr_addr {
-            // SAFETY: Dispatch owns this hart's trap state, with MIE and
-            // MPRV clear and mscratch zero.
-            CSR_MSTATEEN0 => unsafe { runtime::csr::read::<Mstateen0>() }.ok(),
-            // SAFETY: Same dispatch context.
-            CSR_MMPT => unsafe { runtime::csr::read::<Mmpt>() }.ok(),
-            // SAFETY: Same dispatch context.
-            CSR_MSDCFG => unsafe { runtime::csr::read::<Msdcfg>() }.ok(),
+            CSR_MSTATEEN0 => runtime::read_csr_raw::<CSR_MSTATEEN0>().ok(),
+            CSR_MMPT => runtime::read_csr_raw::<CSR_MMPT>().ok(),
+            CSR_MSDCFG => runtime::read_csr_raw::<CSR_MSDCFG>().ok(),
             _ => None,
         }
     }
@@ -344,11 +276,11 @@ impl rdsm_policy::rdsm::probe::TrapSafeCsr for GuardedCsrProbe {
         match csr_addr {
             // SAFETY: Dispatch owns this hart's trap state, with MIE and
             // MPRV clear and mscratch zero.
-            CSR_MSTATEEN0 => (unsafe { runtime::csr::write::<Mstateen0>(value) }).is_ok(),
+            CSR_MSTATEEN0 => unsafe { runtime::write_csr_raw::<CSR_MSTATEEN0>(value) }.is_ok(),
             // SAFETY: Same dispatch context.
-            CSR_MMPT => (unsafe { runtime::csr::write::<Mmpt>(value) }).is_ok(),
+            CSR_MMPT => unsafe { runtime::write_csr_raw::<CSR_MMPT>(value) }.is_ok(),
             // SAFETY: Same dispatch context.
-            CSR_MSDCFG => (unsafe { runtime::csr::write::<Msdcfg>(value) }).is_ok(),
+            CSR_MSDCFG => unsafe { runtime::write_csr_raw::<CSR_MSDCFG>(value) }.is_ok(),
             _ => false,
         }
     }

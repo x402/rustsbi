@@ -63,7 +63,7 @@ impl Timer {
     /// Returns [`Error::Busy`] if the comparator already has an owner.
     pub fn acquire(handler: &'static dyn TimerHandler) -> Result<&'static Self> {
         irq::with_local_disabled(|irq| {
-            if !crate::boot::traps_ready() {
+            if !crate::csr::traps_ready() {
                 return Err(Error::NotReady);
             }
             let supervisor = crate::boot::timer().ok_or(Error::NotReady)?;
@@ -122,7 +122,7 @@ impl Timer {
     }
 
     pub(crate) fn init_current(&'static self, irq: &LocalIrqDisabled) -> Result<()> {
-        if !crate::boot::traps_ready() {
+        if !crate::csr::traps_ready() {
             return Err(Error::NotReady);
         }
         if self.local.try_get_current().is_some() {
@@ -143,7 +143,7 @@ impl Timer {
 
     /// Detects supervisor comparison access after Runtime trap installation.
     pub fn supports_sstc() -> bool {
-        crate::boot::traps_ready() && csrr!(supervisor::TimerCompare).is_ok()
+        crate::csr::traps_ready() && csrr!(supervisor::TimerCompare).is_ok()
     }
 
     fn sstc_available() -> Result<bool> {
