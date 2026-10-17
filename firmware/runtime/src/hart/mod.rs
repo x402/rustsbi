@@ -2,63 +2,56 @@
 //!
 //! SBI HSM policy and ABI translation belong to the firmware.
 
-#[cfg(any(target_arch = "riscv32", target_arch = "riscv64"))]
+use crate::Result;
+mod features;
 mod lifecycle;
 mod local;
 mod set;
 mod topology;
-#[cfg(any(target_arch = "riscv32", target_arch = "riscv64"))]
 mod wakeup;
 
-#[cfg(any(target_arch = "riscv32", target_arch = "riscv64"))]
+pub use features::{
+    PrivilegedVersion, detect_performance_counters, detect_privileged_version, has_hypervisor,
+    supports_privilege,
+};
+
 pub use wakeup::{HartWake, install_wakeup};
 
-#[cfg(any(target_arch = "riscv32", target_arch = "riscv64"))]
 pub(crate) use lifecycle::{
     ControlTransfer, HartEvent, current_cell, current_hart, set_active_context,
     take_control_transfer, take_local_event,
 };
-#[cfg(any(target_arch = "riscv32", target_arch = "riscv64"))]
 pub use lifecycle::{
-    HartState, ResumeError, ResumeTicket, StageError, StartError, StartOutcome, StopError,
-    SuspendError, begin_nonretentive_resume, can_receive_ipi, resume_current_retentive,
-    stage_current, start, status, stop_current, suspend_current,
+    HartState, ResumeTicket, StartOutcome, begin_nonretentive_resume, can_receive_ipi,
+    resume_current_retentive, stage_boot_handoff, start, status, stop_current, suspend_current,
 };
-pub use local::{HartLocal, HartLocalError};
+pub(crate) use local::HartLocal;
 pub use set::{HartSet, HartSetIter};
 
 pub(crate) use topology::{HART_TABLE, HartEntry, publish};
 
 /// A validated RISC-V hart identifier.
 ///
-/// Hardware IDs may be sparse. Runtime assigns each enabled hart a compact
-/// index once during boot; devices and SBI handoffs retain the hardware ID.
+/// Hardware IDs may be sparse.
+/// Runtime assigns each enabled hart a compact index once during boot; devices
+/// and SBI handoffs retain the hardware ID.
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
 pub struct HartId {
     raw: usize,
     index: usize,
 }
 
-/// Failure to turn a hardware hart identifier into a configured [`HartId`].
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum HartIdError {
-    /// Boot has not published the hart topology yet.
-    Unavailable,
-    /// The identifier does not belong to an enabled hart.
-    Unknown,
-}
-
 impl HartId {
     /// Reads and validates the current hart's `mhartid`.
     #[inline]
-    pub fn current() -> Result<Self, HartIdError> {
+    pub fn current() -> Result<Self> {
         use csr::machine;
         Self::from_raw(machine::HartId::read().into())
     }
 
     /// Validates a raw hardware hart identifier.
     #[inline]
-    pub fn from_raw(raw: usize) -> Result<Self, HartIdError> {
+    pub fn from_raw(raw: usize) -> Result<Self> {
         topology::from_raw(raw)
     }
 

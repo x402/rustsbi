@@ -19,7 +19,6 @@ pastey = "0.1.0"
 riscv-aia = { version = "0.0.0", path = "../../library/riscv-aia" }
 runtime = { package = "rustsbi-firmware-runtime", version = "0.0.0", path = "../runtime" }
 rdsm-policy = { version = "0.1.0", path = "../../../cove-sw/crates/rdsm-policy", optional = true }
-csr = { package = "rustsbi-csr", path = "../runtime/lib/csr" }
 
 [[bin]]
 name = "rustsbi-prototyper"

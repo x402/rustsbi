@@ -654,7 +654,6 @@ dependencies = [
  "rdsm-policy",
  "riscv",
  "riscv-aia",
- "rustsbi-csr",
  "rustsbi-firmware-runtime",
  "sbi-spec",
  "seq-macro",
