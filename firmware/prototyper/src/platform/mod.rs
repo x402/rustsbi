@@ -20,7 +20,7 @@ pub(crate) mod qemu_aplic;
 pub use boot::{firmware_ram_range, init_board, initialize_secondary_hart, wait_until_ready};
 pub(crate) use info::{BoardInfo, ClintResource, ImsicInfo};
 #[cfg(feature = "rdsm")]
-pub(crate) use state::main_ram_range;
+pub(crate) use state::{imsic_file_range, main_ram_range};
 pub(crate) use state::{
     board_info, console_device, enabled_harts, hart_privilege_checked, ipi_delivery,
     mark_hart_privilege_checked,

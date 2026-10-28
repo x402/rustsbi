@@ -72,6 +72,25 @@ pub(crate) fn main_ram_range() -> Option<(usize, usize)> {
         .map(|range| (range.start().as_usize(), range.end().as_usize()))
 }
 
+/// Returns the enclosing physical range of all machine-level IMSIC
+/// interrupt files as `(start, end)`, or `None` when no IMSIC was selected
+/// from the Platform Description. Used by the RDSM as the interrupt-file
+/// whitelist for COVI conversion.
+#[cfg(feature = "rdsm")]
+pub(crate) fn imsic_file_range() -> Option<(usize, usize)> {
+    let board = &PLATFORM.get()?.board;
+    let imsic = board.devices.interrupts.imsic()?;
+    let mut files = imsic.resource().hart_files.iter();
+    let first = files.next()?;
+    let mut start = first.start().as_usize();
+    let mut end = first.end().as_usize();
+    for file in files {
+        start = start.min(file.start().as_usize());
+        end = end.max(file.end().as_usize());
+    }
+    Some((start, end))
+}
+
 pub(crate) fn supervisor_memory() -> &'static SupervisorMemory {
     &platform().supervisor_memory
 }

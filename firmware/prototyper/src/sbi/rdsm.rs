@@ -88,6 +88,7 @@ pub(crate) fn init(hart_id: usize) {
             probe: &mut probe,
             payload_base: crate::firmware::image_address(),
             ram_range: crate::platform::main_ram_range(),
+            imsic_range: crate::platform::imsic_file_range(),
             hart_id,
             dt_smsdid: crate::sbi::features::hart_has_extension(
                 hart_id,
@@ -234,7 +235,7 @@ impl Extension for CoviDomain {
     fn probe(&self) -> usize {
         #[cfg(feature = "rdsm")]
         {
-            return rdsm_policy::COVI_PROBE;
+            return rdsm_policy::covi_probe();
         }
         #[cfg(not(feature = "rdsm"))]
         {
