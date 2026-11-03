@@ -37,15 +37,15 @@ pub(crate) fn traps_ready() -> bool {
     #[cfg(any(target_arch = "riscv32", target_arch = "riscv64"))]
     {
         let vector = csr::machine::TrapVector::read();
-        let base = usize::from(vector.read::<csr::machine::BASE>().address());
+        let base = usize::from(vector.get::<csr::machine::BASE>().address());
         let entry_matches = base == crate::trap::entry::trap_entry as *const () as usize
             || base == crate::trap::entry::trap_entry_hypervisor as *const () as usize;
         #[cfg(target_pointer_width = "32")]
         let entry_matches =
             entry_matches || base == crate::trap::entry::trap_entry_high as *const () as usize;
-        vector.read::<csr::machine::MODE>() == csr::values::vector::VectorMode::Direct
+        vector.get::<csr::machine::MODE>() == csr::values::vector::VectorMode::Direct
             && entry_matches
-            && csr::machine::Status::read().read::<csr::machine::MPRV>()
+            && csr::machine::Status::read().get::<csr::machine::MPRV>()
                 == csr::machine::AccessPrivilege::Current
     }
     #[cfg(not(any(target_arch = "riscv32", target_arch = "riscv64")))]
@@ -59,13 +59,13 @@ pub fn enable_supervisor_seed() {
     if !traps_ready() {
         return;
     }
-    if csrr!(csr::machine::SecurityConfiguration).is_ok() {
+    if csrr!(csr::machine::SecurityConfig).is_ok() {
         // SAFETY: The fixed SSEED bit permits supervisor seed access without
         // changing M-mode. One CSRS preserves concurrent updates to other bits.
         #[cfg(any(target_arch = "riscv32", target_arch = "riscv64"))]
         unsafe {
             core::arch::asm!("csrs {csr}, {mask}",
-            csr = const csr::machine::SecurityConfiguration::NUMBER,
+            csr = const csr::machine::SecurityConfig::NUMBER,
             mask = in(reg) 1usize << 9, options(nomem));
         }
     }
