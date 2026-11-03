@@ -14,6 +14,7 @@
 //! TSM sees the original `a7`, and a staged transfer is consumed by the
 //! Runtime's ceremony on the same hart's ecall return path.
 
+use runtime::hart::HartId;
 use runtime::rustsbi::{Extension, SbiRet, VendorSBI};
 
 /// Private RDSM extension: MPT programming and the TEECALL/TEERET machinery.
@@ -80,7 +81,7 @@ pub(crate) fn get_tsm_entry() -> usize {
 /// detection; the guarded-CSR probe works before Runtime trap activation
 /// (the recovery vector is self-contained, exactly as in `trap::init`'s own
 /// Sstc probe).
-pub(crate) fn init(hart_id: usize) {
+pub(crate) fn init(hart: HartId) {
     #[cfg(feature = "rdsm")]
     {
         let mut probe = GuardedCsrProbe;
@@ -89,9 +90,9 @@ pub(crate) fn init(hart_id: usize) {
             payload_base: crate::firmware::image_address(),
             ram_range: crate::platform::main_ram_range(),
             imsic_range: crate::platform::imsic_file_range(),
-            hart_id,
-            dt_smsdid: crate::sbi::features::hart_has_extension(
-                hart_id,
+            hart_id: hart.as_usize(),
+            dt_smsdid: crate::sbi::features::has_extension(
+                hart,
                 crate::sbi::features::Extension::Smsdid,
             ),
         };
@@ -104,7 +105,7 @@ pub(crate) fn init(hart_id: usize) {
         log::info!("RDSM: machine-interrupt policy installed (MSDEI claim path armed)");
     }
     #[cfg(not(feature = "rdsm"))]
-    let _ = hart_id;
+    let _ = hart;
 }
 
 /// The four CoVE extensions bound to their EIDs for the vendor dispatch
