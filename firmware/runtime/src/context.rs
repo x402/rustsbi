@@ -83,10 +83,18 @@
 use core::cell::UnsafeCell;
 use core::sync::atomic::{AtomicU8, Ordering};
 
-use csr::Write;
-use csr::machine::Status;
-use csr::supervisor::AddressSpace;
-use csr::values::trap::InterruptSet;
+/// The `satp` translation-state image, re-exported so the public API below
+/// names its type from this module.
+pub use csr::supervisor::AddressSpace;
+/// The supervisor interrupt-enable mask (`sie`), re-exported so the public
+/// API below names its type from this module.
+pub use csr::values::trap::InterruptSet;
+/// The machine return-state image (`mstatus`), re-exported so the public
+/// API below names its type from this module.
+pub use csr::machine::Status;
+/// The write-access marker for [`Status`], re-exported so monitors can
+/// name the `Status<Write>` arguments of `fill` and `snapshot`.
+pub use csr::Write;
 
 /// Context state values; private Runtime facts transitioned only by the
 /// functions in this module.
