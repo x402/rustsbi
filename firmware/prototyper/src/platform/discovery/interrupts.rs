@@ -131,6 +131,16 @@ impl InterruptController {
                         return Err(Error::InvalidArgs);
                     }
                     board.devices.interrupts.set_imsic(imsic, source_path)?;
+                } else if let Some(supervisor) =
+                    imsic::discover_supervisor(node, registers, cpu_interrupt_controllers)?
+                {
+                    if board.devices.interrupts.supervisor_imsic().is_some() {
+                        return Err(Error::InvalidArgs);
+                    }
+                    board
+                        .devices
+                        .interrupts
+                        .set_supervisor_imsic(supervisor, source_path)?;
                 }
             }
             Self::MachineAplic(handoff) => {

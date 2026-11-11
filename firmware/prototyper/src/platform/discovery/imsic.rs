@@ -20,9 +20,10 @@ use runtime::{
 use crate::devicetree::u32_property;
 use crate::driver;
 
-use super::super::info::{ImsicAddressLayout, ImsicInfo};
+use super::super::info::{ImsicAddressLayout, ImsicInfo, SupervisorImsicInfo};
 
 const MACHINE_EXTERNAL_INTERRUPT_ID: u32 = 11;
+const SUPERVISOR_EXTERNAL_INTERRUPT_ID: u32 = 9;
 const MAX_GUEST_INDEX_BITS: u32 = 7;
 const MAX_HART_INDEX_BITS: u32 = 15;
 const MAX_GROUP_INDEX_BITS: u32 = 7;
@@ -126,6 +127,106 @@ pub(super) fn discover(
         ipi_iid,
         hart_files,
     }))
+}
+
+/// Discovers a supervisor-domain IMSIC node (SmmTT v0.49 section 6.1): an
+/// `riscv,imsics` block whose `interrupts-extended` entries wire
+/// SupervisorExternal (9). The register range must cover the whole
+/// contiguous supervisor-domain array; the domain index shift derives from
+/// the page/hart/guest geometry, and the wired entries must fit the
+/// advertised hart index. Group-indexed layouts are not supported here.
+pub(super) fn discover_supervisor(
+    node: FdtNode<'_, '_>,
+    register_ranges: &[DeviceRegisterRange],
+    cpu_interrupt_controllers: &[CpuInterruptController],
+) -> Result<Option<SupervisorImsicInfo>> {
+    let first_register_range = register_ranges.first().ok_or(Error::InvalidArgs)?;
+    if register_ranges
+        .iter()
+        .any(|range| !range.has_aligned_bounds(driver::IMSIC_FILE_SPAN))
+    {
+        return Err(Error::InvalidArgs);
+    }
+
+    if !supervisor_wiring(node, cpu_interrupt_controllers)? {
+        return Ok(None);
+    }
+
+    let range = register_ranges.first().copied().ok_or(Error::InvalidArgs)?;
+    if register_ranges.len() != 1 {
+        return Err(Error::InvalidArgs);
+    }
+
+    let file_count = node
+        .property("interrupts-extended")
+        .ok_or(Error::InvalidArgs)?
+        .value
+        .len()
+        / (2 * size_of::<u32>());
+    let file_count = u32::try_from(file_count).map_err(|_| Error::InvalidArgs)?;
+    let default_hart_index_bits = file_count
+        .checked_sub(1)
+        .map_or(0, |last| u32::BITS - last.leading_zeros());
+    let hart_index_bits =
+        u32_property(node, "riscv,hart-index-bits").unwrap_or(default_hart_index_bits);
+    let guest_index_bits = u32_property(node, "riscv,guest-index-bits").unwrap_or(0);
+    if guest_index_bits == 0 {
+        // Without guest files there is nothing for COVI to virtualize.
+        debug!(
+            "IMSIC: supervisor node at 0x{:x} has no guest interrupt files, skipping",
+            range.start().as_usize()
+        );
+        return Ok(None);
+    }
+    if u32_property(node, "riscv,group-index-bits").unwrap_or(0) != 0 {
+        return Err(Error::InvalidArgs);
+    }
+    validate_topology(guest_index_bits, hart_index_bits, 0, 0, driver::IMSIC_FILE_SPAN.trailing_zeros())?;
+
+    let hart_span = driver::IMSIC_FILE_SPAN << guest_index_bits;
+    let domain_index_shift = driver::IMSIC_FILE_SPAN.trailing_zeros() + guest_index_bits + hart_index_bits;
+    let domain_span = 1usize
+        .checked_shl(domain_index_shift)
+        .ok_or(Error::Overflow)?;
+    let span = range.end().as_usize() - range.start().as_usize();
+    if span == 0 || span % domain_span != 0 {
+        return Err(Error::InvalidArgs);
+    }
+
+    Ok(Some(SupervisorImsicInfo {
+        range,
+        domain_index_shift,
+        guest_index_bits,
+        hart_index_bits,
+    }))
+}
+
+/// Whether any `interrupts-extended` entry wires SupervisorExternal (9) to
+/// a known CPU interrupt controller.
+fn supervisor_wiring(
+    node: FdtNode<'_, '_>,
+    controllers: &[CpuInterruptController],
+) -> Result<bool> {
+    let cells = u32_cells(node, "interrupts-extended").ok_or(Error::InvalidArgs)?;
+    let mut interrupts = cells.chunks_exact(2);
+    let mut wired = false;
+
+    for interrupt in interrupts.by_ref() {
+        if interrupt[1] != SUPERVISOR_EXTERNAL_INTERRUPT_ID {
+            continue;
+        }
+        if !controllers
+            .iter()
+            .any(|controller| controller.phandle == interrupt[0])
+        {
+            return Err(Error::InvalidArgs);
+        }
+        wired = true;
+    }
+    if !interrupts.remainder().is_empty() {
+        return Err(Error::InvalidArgs);
+    }
+    Ok(wired)
 }
 
 fn is_cpu_interrupt_controller(node: FdtNode<'_, '_>) -> bool {

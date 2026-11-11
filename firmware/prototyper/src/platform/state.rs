@@ -6,7 +6,7 @@ use core::sync::atomic::{AtomicBool, Ordering};
 use runtime::{hart::HartId, ipi::IpiDelivery, memory::SupervisorMemory};
 use spin::{Mutex, Once};
 
-use crate::driver::DbcnBackend;
+use crate::driver::{self, DbcnBackend};
 
 use super::info::BoardInfo;
 
@@ -72,23 +72,32 @@ pub(crate) fn main_ram_range() -> Option<(usize, usize)> {
         .map(|range| (range.start().as_usize(), range.end().as_usize()))
 }
 
-/// Returns the enclosing physical range of all machine-level IMSIC
-/// interrupt files as `(start, end)`, or `None` when no IMSIC was selected
-/// from the Platform Description. Used by the RDSM as the interrupt-file
-/// whitelist for COVI conversion.
+/// Returns the supervisor/guest interrupt-file geometry of the selected
+/// supervisor-domain IMSIC node (SmmTT v0.49 section 6.1), or `None` when
+/// the platform has none. Used by the RDSM as the COVI interrupt-file
+/// whitelist and address calculus; machine-level files are never exposed.
 #[cfg(feature = "rdsm")]
-pub(crate) fn imsic_file_range() -> Option<(usize, usize)> {
+pub(crate) fn supervisor_imsic_geometry() -> Option<rdsm_policy::RdsmImsicGeometry> {
     let board = &PLATFORM.get()?.board;
-    let imsic = board.devices.interrupts.imsic()?;
-    let mut files = imsic.resource().hart_files.iter();
-    let first = files.next()?;
-    let mut start = first.start().as_usize();
-    let mut end = first.end().as_usize();
-    for file in files {
-        start = start.min(file.start().as_usize());
-        end = end.max(file.end().as_usize());
+    let supervisor = board.devices.interrupts.supervisor_imsic()?.resource();
+    let start = supervisor.range.start().as_usize();
+    let end = supervisor.range.end().as_usize();
+    if end <= start || supervisor.guest_index_bits == 0 {
+        return None;
     }
-    Some((start, end))
+    let hart_shift = driver::IMSIC_FILE_SPAN.trailing_zeros() + supervisor.guest_index_bits;
+    let domain_span = usize::checked_shl(1, hart_shift + supervisor.hart_index_bits)?;
+    let span = end - start;
+    if span % domain_span != 0 {
+        return None;
+    }
+    Some(rdsm_policy::RdsmImsicGeometry {
+        range_start: start,
+        range_end: end,
+        domain_index_shift: (hart_shift + supervisor.hart_index_bits) as usize,
+        guest_index_bits: supervisor.guest_index_bits as usize,
+        hart_index_bits: supervisor.hart_index_bits as usize,
+    })
 }
 
 pub(crate) fn supervisor_memory() -> &'static SupervisorMemory {

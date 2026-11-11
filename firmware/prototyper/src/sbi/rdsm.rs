@@ -89,7 +89,7 @@ pub(crate) fn init(hart: HartId) {
             probe: &mut probe,
             payload_base: crate::firmware::image_address(),
             ram_range: crate::platform::main_ram_range(),
-            imsic_range: crate::platform::imsic_file_range(),
+            supervisor_imsic: crate::platform::supervisor_imsic_geometry(),
             hart_id: hart.as_usize(),
             dt_smsdid: crate::sbi::features::has_extension(
                 hart,

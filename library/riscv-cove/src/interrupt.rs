@@ -5,6 +5,29 @@
 pub const EID_COVI: usize = crate::eid_from_str("COVI") as _;
 pub use fid::*;
 
+/// Parameters for `sbi_covi_init_tvm_aia` (CoVE v0.7 §11.1, Table 33).
+///
+/// Sits at a non-confidential physical address supplied by the host; the
+/// TSM validates it against the platform's supervisor/guest interrupt-file
+/// geometry before accepting it.
+#[repr(C)]
+#[derive(Clone, Copy, Debug)]
+pub struct TvmAiaParams {
+    /// Base address of the platform's supervisor-domain interrupt-file
+    /// array (SmmTT v0.49 §6.1 base B).
+    pub imsic_base_addr: u64,
+    pub group_index_bits: u64,
+    /// Must be ≥ 24 (CoVE §11.1).
+    pub group_index_shift: u64,
+    pub hart_index_bits: u64,
+    pub guest_index_bits: u64,
+    /// Guest interrupt files per vCPU-hart. Implementations may reject
+    /// values > 0 when nested IMSIC virtualization is unsupported.
+    pub guests_per_hart: u64,
+}
+
+const _: () = assert!(core::mem::size_of::<TvmAiaParams>() == 48);
+
 /// Declared in §11.
 mod fid {
     /// Function ID to initialize TVM AIA.

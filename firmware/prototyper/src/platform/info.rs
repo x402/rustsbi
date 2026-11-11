@@ -67,6 +67,19 @@ pub(crate) struct ImsicInfo {
     pub(crate) hart_files: Vec<DeviceRegisterRange>,
 }
 
+/// Supervisor-domain IMSIC resources selected from the Platform
+/// Description (SmmTT v0.49 section 6.1): the register range covers every
+/// implemented supervisor interrupt domain contiguously, laid out as
+/// `B + n·2^I + h·2^D + g·2^12` with `I = 12 + guest_index_bits +
+/// hart_index_bits` and page order S, G0, G1, … per hart block.
+#[derive(Clone, Copy)]
+pub(crate) struct SupervisorImsicInfo {
+    pub(crate) range: DeviceRegisterRange,
+    pub(crate) domain_index_shift: u32,
+    pub(crate) guest_index_bits: u32,
+    pub(crate) hart_index_bits: u32,
+}
+
 /// Console resources selected from the device tree.
 pub(crate) struct ConsoleInfo {
     pub(crate) registers: DeviceRegisterRange,
@@ -120,6 +133,7 @@ pub(crate) enum MachineAplicHandoff {
 pub(crate) struct InterruptDescriptions {
     clint: Option<NodeSelection<ClintResource>>,
     imsic: Option<NodeSelection<ImsicInfo>>,
+    supervisor_imsic: Option<NodeSelection<SupervisorImsicInfo>>,
     machine_aplic: Option<NodeSelection<DeviceRegisterRange>>,
     machine_aplic_handoff: MachineAplicHandoff,
     pub(crate) thead_plic: Option<DeviceRegisterRange>,
@@ -136,6 +150,10 @@ impl InterruptDescriptions {
         self.imsic.as_ref()
     }
 
+    pub(crate) fn supervisor_imsic(&self) -> Option<&NodeSelection<SupervisorImsicInfo>> {
+        self.supervisor_imsic.as_ref()
+    }
+
     pub(crate) fn machine_aplic(&self) -> Option<&NodeSelection<DeviceRegisterRange>> {
         self.machine_aplic.as_ref()
     }
@@ -146,6 +164,14 @@ impl InterruptDescriptions {
 
     pub(crate) fn set_imsic(&mut self, value: ImsicInfo, source_path: &[&str]) -> Result<()> {
         select_from_node_once(&mut self.imsic, value, source_path)
+    }
+
+    pub(crate) fn set_supervisor_imsic(
+        &mut self,
+        value: SupervisorImsicInfo,
+        source_path: &[&str],
+    ) -> Result<()> {
+        select_from_node_once(&mut self.supervisor_imsic, value, source_path)
     }
 
     pub(crate) fn set_machine_aplic(
@@ -181,6 +207,7 @@ impl InterruptDescriptions {
         Self {
             clint: None,
             imsic: None,
+            supervisor_imsic: None,
             machine_aplic: None,
             machine_aplic_handoff: MachineAplicHandoff::KeepVisible,
             thead_plic: None,
