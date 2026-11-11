@@ -10,23 +10,45 @@ pub use fid::*;
 /// Sits at a non-confidential physical address supplied by the host; the
 /// TSM validates it against the platform's supervisor/guest interrupt-file
 /// geometry before accepting it.
+///
+/// Layout follows the spec's C definition verbatim — `unsigned long`
+/// imsic_base_addr followed by five `uint32_t` fields — so the byte image
+/// is identical across RV64 implementations (28 bytes padded to 32).
 #[repr(C)]
 #[derive(Clone, Copy, Debug)]
 pub struct TvmAiaParams {
     /// Base address of the platform's supervisor-domain interrupt-file
     /// array (SmmTT v0.49 §6.1 base B).
-    pub imsic_base_addr: u64,
-    pub group_index_bits: u64,
+    pub imsic_base_addr: usize,
+    pub group_index_bits: u32,
     /// Must be ≥ 24 (CoVE §11.1).
-    pub group_index_shift: u64,
-    pub hart_index_bits: u64,
-    pub guest_index_bits: u64,
+    pub group_index_shift: u32,
+    pub hart_index_bits: u32,
+    pub guest_index_bits: u32,
     /// Guest interrupt files per vCPU-hart. Implementations may reject
     /// values > 0 when nested IMSIC virtualization is unsupported.
-    pub guests_per_hart: u64,
+    pub guests_per_hart: u32,
 }
 
-const _: () = assert!(core::mem::size_of::<TvmAiaParams>() == 48);
+const _: () = assert!(core::mem::size_of::<TvmAiaParams>() == 32);
+const _: () = assert!(core::mem::align_of::<TvmAiaParams>() == 8);
+
+#[cfg(test)]
+mod layout_tests {
+    use super::TvmAiaParams;
+    use core::mem::offset_of;
+
+    #[test]
+    fn tvm_aia_params_layout_matches_spec() {
+        assert_eq!(offset_of!(TvmAiaParams, imsic_base_addr), 0);
+        assert_eq!(offset_of!(TvmAiaParams, group_index_bits), 8);
+        assert_eq!(offset_of!(TvmAiaParams, group_index_shift), 12);
+        assert_eq!(offset_of!(TvmAiaParams, hart_index_bits), 16);
+        assert_eq!(offset_of!(TvmAiaParams, guest_index_bits), 20);
+        assert_eq!(offset_of!(TvmAiaParams, guests_per_hart), 24);
+        assert_eq!(core::mem::size_of::<TvmAiaParams>(), 32);
+    }
+}
 
 /// Declared in §11.
 mod fid {
