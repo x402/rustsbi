@@ -127,7 +127,62 @@ where
     /// Delete manager, free all resource.
     fn deinit(self, cur_regions: &mut [(usize, usize); MAX_PMP_ENTRY_COUNT as usize]) -> u32;
     /// Create new region with mem.
-    fn extend(&mut self, addr: usize, len: usize) -> bool;
+    ///
+    /// # Safety
+    ///
+    /// The caller must ensure all of the following about the byte range
+    /// `addr..addr + len`:
+    ///
+    /// 1. `addr + len` does not overflow `usize`, so the range does not wrap
+    ///    around the address space.
+    /// 2. The whole range satisfies the destination requirements of
+    ///    [`core::ptr::write_bytes`] applied as
+    ///    `write_bytes(addr as *mut u8, 0, len)`: `addr` is non-null, and the
+    ///    pointer formed from `addr` is valid for writes of `len` bytes, which
+    ///    requires the entire range to lie within a single live allocation
+    ///    whose provenance covers it.
+    /// 3. The caller owns the range, or holds an equivalent platform
+    ///    guarantee that the range contents may be disposed of. NAPOT
+    ///    alignment, or any success reported by a [`SecMemProtector`], does
+    ///    not establish this guarantee.
+    /// 4. The backing memory stays alive and address-stable for as long as
+    ///    the manager holds the region: it must not be freed, moved, or
+    ///    reused before the manager gives the region back through
+    ///    [`SecMemManager::reclaim`] or reports it back while being consumed
+    ///    by [`SecMemManager::deinit`].
+    /// 5. The caller coordinates all external access to the range and to
+    ///    every sub-allocation handed out from it: while the manager holds
+    ///    the region, the safe sanitization methods [`SecMemManager::free_em`]
+    ///    and [`SecMemManager::deinit`] may write to any part of the range at
+    ///    any time, and no concurrent access or still-live external reference
+    ///    may exist at such a write.
+    /// 6. Once [`SecMemManager::reclaim`] returns a region, the manager no
+    ///    longer holds or sanitizes it, and the caller may dispose of the
+    ///    memory again. Once [`SecMemManager::deinit`] consumes the manager,
+    ///    the manager no longer uses any region it held.
+    ///
+    /// These are standing obligations of this call, not obligations of the
+    /// call's duration: they cover every sanitization write the manager
+    /// performs on the registered region while it holds it. The manager
+    /// itself writes to the registered range only through its sanitization
+    /// methods; writes by allocator implementations it invokes are covered
+    /// by the coordination obligation above.
+    ///
+    /// # Examples
+    ///
+    /// Registering memory without `unsafe` is rejected at compile time, so
+    /// safe code can no longer make the manager sanitize arbitrary
+    /// addresses:
+    ///
+    /// ```compile_fail,E0133
+    /// use smm::allocators::NoneAlloc;
+    /// use smm::manager::UniSecMemManager;
+    /// use smm::SecMemManager;
+    ///
+    /// let mut manager = UniSecMemManager::<30, NoneAlloc<30>, NoneAlloc<30>>::new();
+    /// manager.extend(0x8000_0000, 0x1000);
+    /// ```
+    unsafe fn extend(&mut self, addr: usize, len: usize) -> bool;
     /// Reclaim an unused allocable region from manager
     fn reclaim(&mut self) -> Option<(usize, usize)>;
     /// Alloc enclave mem from request region of type
@@ -146,6 +201,15 @@ pub trait SecMemProtector {
     /// Free a hardware
     fn free(&mut self, hwid: u32) -> bool;
     /// Check memory area can be protect by hardware or not.
+    ///
+    /// This method only reports whether the protecting hardware can cover
+    /// the given address range, for example PMP NAPOT alignment and size
+    /// constraints. A `true` result does not establish Rust allocation
+    /// validity, provenance, writability, or ownership of the range, and no
+    /// sanitization write may rely on it as evidence that its destination is
+    /// sound. Sanitization soundness is supported only by the
+    /// [`SecMemManager::extend`] registration contract and the manager's
+    /// region containment checks.
     fn is_protectable(&self, addr: usize, len: usize) -> bool;
     /// Grant access to secure mem on current hart
     fn grant_access(&self, addr: usize, len: usize, hwid: u32) -> bool;

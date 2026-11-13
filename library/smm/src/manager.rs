@@ -100,6 +100,21 @@ where
             // Though SMM assume all enclaves should exited successfully before deinit, which means
             // there isn't any protected data in secure memory. But TEE driver may also be attacked,
             // so SMM still clean all data in secure memory when deinit to avoid any protected data leap.
+            // SAFETY: `core::ptr::write_bytes(region.addr as *mut u8, 0, region.len)` requires
+            // `region.addr as *mut u8` to be valid for writes of `region.len` bytes.
+            // - Every region in `alloc_regions` was registered through `unsafe
+            //   extend()`, whose contract guarantees the whole `addr..addr + len`
+            //   range lies within a live allocation the caller owns for the
+            //   entire time the manager holds it, and that the caller
+            //   coordinates external access so sanitization writes face no
+            //   concurrent access or still-live external reference.
+            // - `region.addr` and `region.len` are the exact values passed to
+            //   `extend()`: they are set once at registration and never
+            //   modified afterwards, so the written range is exactly the
+            //   registered one.
+            // - `self` is consumed by this call and the region has been
+            //   drained out of `alloc_regions`; after the write the range is
+            //   only handed back to the caller through `cur_regions`.
             unsafe {
                 core::ptr::write_bytes(region.addr as *mut u8, 0, region.len);
                 // sfence_vma_all();
@@ -117,7 +132,7 @@ where
         count as u32
     }
 
-    fn extend(&mut self, addr: usize, len: usize) -> bool {
+    unsafe fn extend(&mut self, addr: usize, len: usize) -> bool {
         // Check if new memory area can be protect by hardware
         if !self.protector.is_protectable(addr, len)
             || (self.alloc_regions.len() >= self.alloc_regions.capacity())
@@ -205,9 +220,19 @@ where
                 }
                 _ => Err(()),
             } {
+                let ptr_addr = ptr.as_ptr() as usize;
+                // An allocator is untrusted input: even a type-correct hostile
+                // implementation may return a `NonNull` outside the region
+                // that produced it. The sanitization paths (`free_em`,
+                // `deinit`) only ever write inside registered regions, so an
+                // out-of-region result must not be reported as a successful
+                // allocation.
+                if !region.is_mem_contained(ptr_addr, expect_len) {
+                    return None;
+                }
                 // If alloc successfully, get addr and idx of region
                 region.is_used = true;
-                return Some((ptr.as_ptr() as usize, expect_len, region.id));
+                return Some((ptr_addr, expect_len, region.id));
             }
         }
         None
@@ -224,6 +249,23 @@ where
             .find(|region| region.is_mem_contained(addr, len))
         {
             // Clean enclave memory to avoid data leap between enclaves and when host request reclaim
+            // SAFETY: `core::ptr::write_bytes(addr as *mut u8, 0, len)` requires
+            // `addr as *mut u8` to be valid for writes of `len` bytes.
+            // - The `find` above matched only because
+            //   `region.is_mem_contained(addr, len)` holds, so the whole
+            //   written range lies inside a region registered through
+            //   `unsafe extend()`; the written range inherits that region's
+            //   registration contract: live allocation owned by the extend
+            //   caller, valid for writes, and no concurrent external access
+            //   during sanitization.
+            // - `addr` is non-null: the `NonNull::new(addr as *mut u8)?` gate
+            //   at the function entry returned `Some` for this call, which
+            //   also covers the zero-length case (`len == 0` needs only a
+            //   non-null destination aligned for `u8`).
+            // - The write length is the caller-passed `len`, exactly the
+            //   length the containment check proved stays inside the region;
+            //   `addr` and `len` are locals not modified between the
+            //   containment check and this write.
             unsafe {
                 core::ptr::write_bytes(addr as *mut u8, 0, len);
                 // sfence_vma_all();
@@ -326,11 +368,22 @@ mod smm_stress_tests {
         let region_len = POOL_SIZE / REGION_COUNT;
         for i in 0..REGION_COUNT {
             let addr = aligned_base + (i * region_len);
-            assert!(
-                manager.extend(addr, region_len),
-                "Extend failed at region {}",
-                i
-            );
+            // SAFETY: `manager.extend(addr, region_len)` requires the whole
+            // `[addr, addr + region_len)` range to be valid for writes, owned
+            // by the caller, alive and address-stable while the manager holds
+            // it, and free of concurrent external access during sanitization.
+            // - `addr` points into `raw_buffer`, which stays alive until the
+            //   end of this test and is not freed or reused while the manager
+            //   holds the registered regions.
+            // - The aligned regions lie entirely inside the `raw_buffer`
+            //   allocation: the assertions above established
+            //   `aligned_base + POOL_SIZE <= raw_addr + POOL_SIZE * 2`, and
+            //   the last registered region ends at `aligned_base + POOL_SIZE`.
+            // - This test owns `raw_buffer` and runs on a single thread, so
+            //   the test's own accesses to region memory and the manager's
+            //   sanitization writes are sequenced with each other.
+            let registered = unsafe { manager.extend(addr, region_len) };
+            assert!(registered, "Extend failed at region {}", i);
         }
 
         let mut rng = StdRng::seed_from_u64(42);
@@ -381,5 +434,165 @@ mod smm_stress_tests {
 
         let mut cur_regions = [(0usize, 0usize); MAX_PMP_ENTRY_COUNT as usize];
         assert_eq!(manager.deinit(&mut cur_regions), 0);
+    }
+}
+
+/// Regression tests for issue #496 (smm safe-API sanitization UB).
+///
+/// These tests use a small, explicitly aligned backing storage instead of the
+/// large stress pool, so NAPOT alignment never depends on heap addresses.
+#[cfg(test)]
+mod tests {
+    use crate::allocators::{NoneAlloc, RTAlloc};
+    use core::alloc::Layout;
+    use core::ptr::NonNull;
+
+    use super::*;
+
+    const REGION_LEN: usize = 16;
+    const STORAGE_LEN: usize = 256;
+    const FILL: u8 = 0xA5;
+
+    /// Backing storage whose base address is 16-byte aligned by construction.
+    #[repr(align(16))]
+    struct AlignedStorage([u8; STORAGE_LEN]);
+
+    impl AlignedStorage {
+        fn filled(fill: u8) -> Self {
+            Self([fill; STORAGE_LEN])
+        }
+
+        fn addr(&self) -> usize {
+            self.0.as_ptr() as usize
+        }
+    }
+
+    fn new_manager<AR, AA>() -> UniSecMemManager<30, AR, AA>
+    where
+        AR: SecMemAllocator<30>,
+        AA: SecMemAllocator<30>,
+    {
+        let mut manager = UniSecMemManager::<30, AR, AA>::new();
+        assert!(manager.init(0x1000, 0x1000));
+        manager
+    }
+
+    #[test]
+    fn deinit_clears_owned_region() {
+        let storage = AlignedStorage::filled(FILL);
+        let mut manager = new_manager::<NoneAlloc<30>, NoneAlloc<30>>();
+        let addr = storage.addr();
+        // SAFETY: `addr` is the base of `storage`, a live local allocation
+        // that stays alive and address-stable until the end of this test. The
+        // registered range `[addr, addr + REGION_LEN)` lies entirely inside
+        // `storage`, and `#[repr(align(16))]` makes `addr` a multiple of
+        // `REGION_LEN` (a power of two), so the NAPOT geometry check passes.
+        // This test owns `storage` and only reads it after `deinit` returned,
+        // so no external access is concurrent with the manager's sanitization
+        // write.
+        let registered = unsafe { manager.extend(addr, REGION_LEN) };
+        assert!(registered);
+
+        let mut cur_regions = [(0usize, 0usize); MAX_PMP_ENTRY_COUNT as usize];
+        assert_eq!(manager.deinit(&mut cur_regions), 1);
+        assert_eq!(cur_regions[0], (addr, REGION_LEN));
+        assert!(storage.0[..REGION_LEN].iter().all(|&byte| byte == 0));
+        // Bytes outside the registered region stay untouched.
+        assert!(storage.0[REGION_LEN..].iter().all(|&byte| byte == FILL));
+    }
+
+    #[test]
+    fn free_em_clears_owned_allocation() {
+        let storage = AlignedStorage::filled(FILL);
+        let mut manager = new_manager::<RTAlloc<30>, NoneAlloc<30>>();
+        let addr = storage.addr();
+        // SAFETY: `addr` is the base of `storage`, a live local allocation
+        // that stays alive and address-stable until the end of this test. The
+        // registered range `[addr, addr + REGION_LEN)` lies entirely inside
+        // `storage`, and `#[repr(align(16))]` makes `addr` a multiple of
+        // `REGION_LEN` (a power of two), so the NAPOT geometry check passes.
+        // This test owns `storage` and only reads it after the sanitization
+        // write returned, so no external access is concurrent with the
+        // manager's writes.
+        let registered = unsafe { manager.extend(addr, REGION_LEN) };
+        assert!(registered);
+
+        let (alloc_addr, alloc_len, region_id) = manager
+            .alloc_em(REGION_LEN, SecMemType::Runtime)
+            .expect("RTAlloc hands out the whole region");
+        assert_eq!(alloc_addr, addr);
+        assert_eq!(alloc_len, REGION_LEN);
+
+        assert_eq!(manager.free_em(alloc_addr, alloc_len), Some(region_id));
+        assert!(storage.0[..REGION_LEN].iter().all(|&byte| byte == 0));
+        // Bytes outside the registered region stay untouched.
+        assert!(storage.0[REGION_LEN..].iter().all(|&byte| byte == FILL));
+
+        // The freed region goes back to the caller's ownership.
+        assert_eq!(manager.reclaim(), Some((addr, REGION_LEN)));
+    }
+
+    /// A type-correct but hostile allocator: `available()` passes the
+    /// manager's pre-allocation capacity check, while `alloc()` returns a
+    /// dangling `NonNull` outside every registered region. The test never
+    /// dereferences the returned pointer.
+    struct HostileAlloc<const ORDER: usize> {
+        capacity: usize,
+    }
+
+    impl<const ORDER: usize> SecMemAllocator<ORDER> for HostileAlloc<ORDER> {
+        fn new() -> Self {
+            Self {
+                capacity: REGION_LEN,
+            }
+        }
+
+        fn alloc(&mut self, layout: Layout) -> Result<NonNull<u8>, ()> {
+            let _ = layout;
+            // Dangling, non-null, and aligned for `u8`; compared by address
+            // only, never dereferenced.
+            Ok(NonNull::dangling())
+        }
+
+        fn available(&self) -> usize {
+            self.capacity
+        }
+
+        fn total(&self) -> usize {
+            self.capacity
+        }
+    }
+
+    #[test]
+    fn allocator_result_must_stay_within_region() {
+        let storage = AlignedStorage::filled(FILL);
+        let mut manager = new_manager::<HostileAlloc<30>, NoneAlloc<30>>();
+        let addr = storage.addr();
+        // SAFETY: `addr` is the base of `storage`, a live local allocation
+        // that stays alive and address-stable until the end of this test. The
+        // registered range `[addr, addr + REGION_LEN)` lies entirely inside
+        // `storage`, and `#[repr(align(16))]` makes `addr` a multiple of
+        // `REGION_LEN` (a power of two), so the NAPOT geometry check passes.
+        // This test owns `storage`; the manager never sanitizes anything
+        // here because the out-of-region allocation is rejected by
+        // `alloc_em` and the out-of-region address passed to `free_em`
+        // matches no registered region.
+        let registered = unsafe { manager.extend(addr, REGION_LEN) };
+        assert!(registered);
+
+        // The out-of-region allocator result must not be reported as a
+        // successful allocation.
+        assert_eq!(manager.alloc_em(REGION_LEN, SecMemType::Runtime), None);
+
+        // Sanitization must not be redirected to the out-of-region address
+        // either.
+        let hostile_addr = NonNull::<u8>::dangling().as_ptr() as usize;
+        assert_eq!(manager.free_em(hostile_addr, REGION_LEN), None);
+
+        // Neither path may have touched the storage.
+        assert!(storage.0.iter().all(|&byte| byte == FILL));
+
+        // The region itself remains reclaimable and untouched.
+        assert_eq!(manager.reclaim(), Some((addr, REGION_LEN)));
     }
 }
