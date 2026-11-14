@@ -462,8 +462,10 @@ mod tests {
             Self([fill; STORAGE_LEN])
         }
 
-        fn addr(&self) -> usize {
-            self.0.as_ptr() as usize
+        /// Exposes the base address through `as_mut_ptr()`, so the address
+        /// carries write permission for the manager's sanitization writes.
+        fn addr(&mut self) -> usize {
+            self.0.as_mut_ptr() as usize
         }
     }
 
@@ -479,11 +481,14 @@ mod tests {
 
     #[test]
     fn deinit_clears_owned_region() {
-        let storage = AlignedStorage::filled(FILL);
+        let mut storage = AlignedStorage::filled(FILL);
         let mut manager = new_manager::<NoneAlloc<30>, NoneAlloc<30>>();
         let addr = storage.addr();
-        // SAFETY: `addr` is the base of `storage`, a live local allocation
-        // that stays alive and address-stable until the end of this test. The
+        // SAFETY: `addr` is the base of `storage`, exposed as `usize` through
+        // `as_mut_ptr()`, so a pointer reconstructed from `addr` carries
+        // write-capable provenance over the storage allocation. `storage` is
+        // a live local allocation that stays alive and address-stable until
+        // the end of this test. The
         // registered range `[addr, addr + REGION_LEN)` lies entirely inside
         // `storage`, and `#[repr(align(16))]` makes `addr` a multiple of
         // `REGION_LEN` (a power of two), so the NAPOT geometry check passes.
@@ -503,11 +508,14 @@ mod tests {
 
     #[test]
     fn free_em_clears_owned_allocation() {
-        let storage = AlignedStorage::filled(FILL);
+        let mut storage = AlignedStorage::filled(FILL);
         let mut manager = new_manager::<RTAlloc<30>, NoneAlloc<30>>();
         let addr = storage.addr();
-        // SAFETY: `addr` is the base of `storage`, a live local allocation
-        // that stays alive and address-stable until the end of this test. The
+        // SAFETY: `addr` is the base of `storage`, exposed as `usize` through
+        // `as_mut_ptr()`, so a pointer reconstructed from `addr` carries
+        // write-capable provenance over the storage allocation. `storage` is
+        // a live local allocation that stays alive and address-stable until
+        // the end of this test. The
         // registered range `[addr, addr + REGION_LEN)` lies entirely inside
         // `storage`, and `#[repr(align(16))]` makes `addr` a multiple of
         // `REGION_LEN` (a power of two), so the NAPOT geometry check passes.
@@ -565,11 +573,14 @@ mod tests {
 
     #[test]
     fn allocator_result_must_stay_within_region() {
-        let storage = AlignedStorage::filled(FILL);
+        let mut storage = AlignedStorage::filled(FILL);
         let mut manager = new_manager::<HostileAlloc<30>, NoneAlloc<30>>();
         let addr = storage.addr();
-        // SAFETY: `addr` is the base of `storage`, a live local allocation
-        // that stays alive and address-stable until the end of this test. The
+        // SAFETY: `addr` is the base of `storage`, exposed as `usize` through
+        // `as_mut_ptr()`, so a pointer reconstructed from `addr` carries
+        // write-capable provenance over the storage allocation. `storage` is
+        // a live local allocation that stays alive and address-stable until
+        // the end of this test. The
         // registered range `[addr, addr + REGION_LEN)` lies entirely inside
         // `storage`, and `#[repr(align(16))]` makes `addr` a multiple of
         // `REGION_LEN` (a power of two), so the NAPOT geometry check passes.
