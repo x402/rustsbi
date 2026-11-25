@@ -7,9 +7,10 @@ pub use fid::*;
 
 /// Parameters for `sbi_covi_init_tvm_aia` (CoVE v0.7 §11.1, Table 33).
 ///
-/// Sits at a non-confidential physical address supplied by the host; the
-/// TSM validates it against the platform's supervisor/guest interrupt-file
-/// geometry before accepting it.
+/// Sits at a non-confidential physical address supplied by the host. The
+/// block describes the virtualized IMSIC of the TVM in the TVM's own
+/// guest physical address space; it is not the platform's physical
+/// interrupt-file array.
 ///
 /// Layout follows the spec's C definition verbatim — `unsigned long`
 /// imsic_base_addr followed by five `uint32_t` fields — so the byte image
@@ -17,13 +18,19 @@ pub use fid::*;
 #[repr(C)]
 #[derive(Clone, Copy, Debug)]
 pub struct TvmAiaParams {
-    /// Base address of the platform's supervisor-domain interrupt-file
-    /// array (SmmTT v0.49 §6.1 base B).
+    /// Base address of the virtualized IMSIC in TVM physical address
+    /// space: the address of the IMSIC with group, hart and guest index
+    /// all zero (CoVE §11.1).
     pub imsic_base_addr: usize,
+    /// Number of group index bits in an IMSIC address.
     pub group_index_bits: u32,
-    /// Must be ≥ 24 (CoVE §11.1).
+    /// Location of the group index in an IMSIC address. Must be ≥ 24
+    /// (CoVE §11.1).
     pub group_index_shift: u32,
+    /// Number of hart index bits in an IMSIC address.
     pub hart_index_bits: u32,
+    /// Number of guest index bits in an IMSIC address. Must be at least
+    /// log2(guests_per_hart + 1) (CoVE §11.1).
     pub guest_index_bits: u32,
     /// Guest interrupt files per vCPU-hart. Implementations may reject
     /// values > 0 when nested IMSIC virtualization is unsupported.

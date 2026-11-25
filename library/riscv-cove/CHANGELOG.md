@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Fixed
+
+- Describe `TvmAiaParams` as the TVM's virtualized IMSIC geometry in the TVM's guest physical address space (CoVE v0.7 §11.1), not as the platform's physical interrupt-file array. Documentation only; the 32-byte layout is unchanged.
+
 ## [0.0.0]
 
 Added definitions and constants in the RISC-V Confidential VM Extension (CoVE).
